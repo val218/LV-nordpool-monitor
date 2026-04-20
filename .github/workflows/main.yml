@@ -31,10 +31,10 @@ jobs:
         run: rm -rf .pio/build
 
       - name: Build firmware (LV-nordpool-monitor)
-        run: pio run -e tabui
+        run: pio run -e LV-nordpool-monitor
 
       - name: Build filesystem (LV-nordpool-monitor)
-        run: pio run -e tabui -t buildfs
+        run: pio run -e LV-nordpool-monitor -t buildfs
 
       - name: Build merged flash image
         run: pio run -e LV-nordpool-monitor -t build_merged
@@ -42,5 +42,5 @@ jobs:
       - name: Upload merged-flash.bin
         uses: actions/upload-artifact@v4
         with:
-          name: FluidDial-TabUI
+          name: LV-nordpool-monitor
           path: .pio/build/LV-nordpool-monitor/merged-flash.bin
