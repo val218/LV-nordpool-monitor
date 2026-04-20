@@ -1,6 +1,3 @@
-
-# FluidDial TabUI — builds the 'tabui' environment for JC2432W328C
-# This is the ONLY workflow file needed. Delete any other workflow files.
 name: Build LV-nordpool-monitor
 
 on:
