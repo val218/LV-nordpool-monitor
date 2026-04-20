@@ -1,305 +1,208 @@
-#include "web_server.h"
-#include "i18n.h"
-#include <Preferences.h>
-#include <WiFi.h>
-#include <ArduinoJson.h>
+# Nordpool Electricity Price Monitor — ESP32 + RA8875 + 7" 800×480
 
-// Embedded HTML UI. Kept small and self-contained so everything fits in flash.
-static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Nordpool Monitor</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:#0b0f14; color:#e8eef7; font:14px -apple-system,Segoe UI,Roboto,sans-serif; padding:14px; padding-bottom:40px; }
-  h1 { margin:0 0 10px; font-size:18px; }
-  h2 { margin:18px 0 8px; font-size:15px; color:#9cb; }
-  .card { background:#131a23; border:1px solid #223; border-radius:10px; padding:12px; margin-bottom:10px; }
-  label { display:block; font-size:12px; color:#9ab; margin:6px 0 2px; }
-  input, select, button { width:100%; padding:10px; font-size:14px; border-radius:8px;
-    border:1px solid #334; background:#0f151c; color:#e8eef7; }
-  button { background:#1e6fd9; border-color:#1e6fd9; color:#fff; font-weight:600; margin-top:8px; }
-  button.secondary { background:#2a3544; border-color:#2a3544; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; }
-  .row > * { flex:1; min-width:100px; }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
-  .dot.ok { background:#2c2; } .dot.bad { background:#c22; } .dot.warn { background:#e92; }
-  .relay { border:1px solid #223; border-radius:8px; padding:10px; margin-bottom:8px; }
-  .relay-head { display:flex; justify-content:space-between; align-items:center; }
-  .relay-state { padding:2px 8px; border-radius:12px; font-size:11px; font-weight:700; }
-  .relay-state.on { background:#1a4; color:#fff; } .relay-state.off { background:#333; color:#aaa; }
-  .muted { color:#8a9; font-size:12px; }
-  .price { font-size:24px; font-weight:700; color:#5cf; }
-</style></head>
-<body>
-<h1>Nordpool Monitor</h1>
-<div id="status" class="card"><span class="dot warn"></span>Loading…</div>
+A standalone touchscreen monitor that pulls Latvia's Nordpool day-ahead
+electricity prices and controls up to 8 relays based on configurable price
+thresholds. Configured from a phone via a built-in web UI.
 
-<div class="card">
-  <h2>Current</h2>
-  <div id="priceNow" class="price">-- c/kWh</div>
-  <div class="muted" id="priceMeta">prev — | next —</div>
-</div>
+This is the **RA8875 / 7-inch edition**. For the smaller WT32-SC01 / 3.5-inch
+variant, see the previous project revision.
 
-<div class="card">
-  <h2>Wi-Fi</h2>
-  <label>SSID</label>
-  <select id="ssidSel"><option value="">-- scanning --</option></select>
-  <label>Password</label>
-  <input id="wpass" type="password" autocomplete="off">
-  <div class="row">
-    <button onclick="scanWifi()" class="secondary">Rescan</button>
-    <button onclick="saveWifi()">Connect</button>
-  </div>
-</div>
+## Hardware
 
-<div class="card">
-  <h2>Display</h2>
-  <label>Language</label>
-  <select id="lang">
-    <option value="0">English</option>
-    <option value="1">Latviešu</option>
-    <option value="2">Русский</option>
-  </select>
-  <label>VAT %</label>
-  <input id="vat" type="number" step="0.1" min="0" max="50">
-  <label><input id="showvat" type="checkbox"> Show prices with VAT</label>
-  <button onclick="saveDisplay()">Save</button>
-</div>
+- **ESP32 DevKit** (any flavour with the default VSPI pins exposed — WROOM,
+  WROVER, etc.)
+- **ER-AS-RA8875** — EastRising Arduino shield with the RA8875 display
+  controller
+- **ER-TFTM070-5 (RTP)** — 7-inch 800×480 TFT panel with **resistive** touch
+- **16-channel relay board** (e.g. Sirius-PCB "16 relay USB timer", with
+  the PIC18F2550 removed — see "Relay board modification" below)
+- **Two PCF8574 I2C I/O expanders** at addresses `0x20` and `0x21`
+- **Separate 5 V / 1 A power supply** for the display
 
-<div class="card">
-  <h2>Relays</h2>
-  <div id="relays"></div>
-  <button onclick="saveRelays()">Save relays</button>
-</div>
+### Wiring
 
-<script>
-async function loadState() {
-  const r = await fetch('/api/state');
-  const j = await r.json();
-  const s = document.getElementById('status');
-  const dot = j.wifi ? 'ok' : (j.ap ? 'warn' : 'bad');
-  s.innerHTML = '<span class="dot '+dot+'"></span>'
-    + (j.ap ? 'AP mode ('+j.ip+')' : (j.wifi ? 'Online — ' + j.ip : 'Offline'))
-    + ' • ' + (j.time || '--:--');
-  const fmt = p => p==null ? '—' : (p*100).toFixed(2) + ' c/kWh';
-  document.getElementById('priceNow').textContent = fmt(j.current);
-  document.getElementById('priceMeta').textContent = 'prev ' + fmt(j.prev) + ' | next ' + fmt(j.next);
-  document.getElementById('lang').value = j.lang;
-  document.getElementById('vat').value = j.vat;
-  document.getElementById('showvat').checked = !!j.showvat;
-  renderRelays(j.relays);
-}
-function renderRelays(rs) {
-  const el = document.getElementById('relays');
-  el.innerHTML = '';
-  const modes = ['Always OFF', 'Always ON', 'ON below', 'OFF above'];
-  rs.forEach((r, i) => {
-    const div = document.createElement('div');
-    div.className = 'relay';
-    div.innerHTML = `
-      <div class="relay-head">
-        <strong>Relay ${i+1}</strong>
-        <span class="relay-state ${r.state?'on':'off'}">${r.state?'ON':'OFF'}</span>
-      </div>
-      <label>Name</label>
-      <input data-i="${i}" data-k="name" value="${r.name}" maxlength="16">
-      <label>Mode</label>
-      <select data-i="${i}" data-k="mode">
-        ${modes.map((m,idx)=>`<option value="${idx}" ${r.mode==idx?'selected':''}>${m}</option>`).join('')}
-      </select>
-      <label>Threshold (c/kWh)</label>
-      <input data-i="${i}" data-k="threshold" type="number" step="0.1" min="0" max="200" value="${(r.threshold*100).toFixed(1)}">
-    `;
-    el.appendChild(div);
-  });
-}
-async function scanWifi() {
-  const sel = document.getElementById('ssidSel');
-  sel.innerHTML = '<option value="">-- scanning --</option>';
-  const r = await fetch('/api/scan');
-  const j = await r.json();
-  sel.innerHTML = '';
-  j.forEach(n => {
-    const o = document.createElement('option');
-    o.value = n.ssid; o.textContent = n.ssid + ' (' + n.rssi + ')';
-    sel.appendChild(o);
-  });
-  if (j.length === 0) sel.innerHTML = '<option value="">(no networks found)</option>';
-}
-async function saveWifi() {
-  const ssid = document.getElementById('ssidSel').value;
-  const pass = document.getElementById('wpass').value;
-  if (!ssid) { alert('Pick an SSID'); return; }
-  const body = new URLSearchParams({ssid, pass}).toString();
-  const r = await fetch('/api/wifi', {method:'POST', body, headers:{'Content-Type':'application/x-www-form-urlencoded'}});
-  alert(await r.text());
-}
-async function saveDisplay() {
-  const body = new URLSearchParams({
-    lang: document.getElementById('lang').value,
-    vat: document.getElementById('vat').value,
-    showvat: document.getElementById('showvat').checked ? '1' : '0'
-  }).toString();
-  await fetch('/api/display', {method:'POST', body, headers:{'Content-Type':'application/x-www-form-urlencoded'}});
-  loadState();
-}
-async function saveRelays() {
-  const inputs = document.querySelectorAll('#relays [data-i]');
-  const data = {};
-  inputs.forEach(inp => {
-    const i = inp.dataset.i, k = inp.dataset.k;
-    if (!data[i]) data[i] = {};
-    data[i][k] = k === 'threshold' ? (parseFloat(inp.value)/100.0) : (k === 'mode' ? parseInt(inp.value) : inp.value);
-  });
-  await fetch('/api/relays', {method:'POST', body: JSON.stringify(data), headers:{'Content-Type':'application/json'}});
-  loadState();
-}
-loadState(); scanWifi();
-setInterval(loadState, 10000);
-</script>
-</body></html>)HTML";
+All SPI lines go straight from ESP32 3.3 V logic to the shield's SPI header.
+The RA8875's SPI inputs are 5 V-tolerant but will happily accept 3.3 V signals,
+and MISO on the shield is already level-shifted down to 3.3 V. **No external
+level shifter is needed.**
 
-extern Lang g_lang;  // defined in main.cpp
+| ESP32 GPIO | Shield header | Notes                              |
+|------------|---------------|-------------------------------------|
+| 18         | SCK           | VSPI clock                          |
+| 23         | MOSI          | VSPI MOSI                           |
+| 19         | MISO          | VSPI MISO                           |
+| 5          | CS            | RA8875 chip-select (configurable)   |
+| 4          | RST           | RA8875 reset (configurable)         |
+| 2          | INT           | Touch interrupt (optional)          |
+| GND        | GND           | **Common ground — required**        |
+| *(external)* | 5V          | **Separate 5 V / ≥1 A supply**      |
 
-WebUI::WebUI(NetManager& net, RelayController& relays, UI& ui)
-    : _net(net), _relays(relays), _ui(ui), _server(80) {}
+The two PCF8574s sit on the ESP32's default I2C bus, at different addresses:
 
-String WebUI::buildStateJson() {
-    JsonDocument doc;
-    doc["wifi"] = _net.isConnected();
-    doc["ap"]   = _net.isApMode();
-    doc["ip"]   = _net.ipString();
-    doc["lang"] = (int)g_lang;
-    doc["vat"]  = _ui.vatPercent();
-    doc["showvat"] = _ui.showVat();
+| ESP32 GPIO | Both PCF8574s | Notes                     |
+|------------|---------------|----------------------------|
+| 21         | SDA           | shared                     |
+| 22         | SCL           | shared                     |
+| 3V3        | VCC           | shared                     |
+| GND        | GND           | shared with relay GND     |
 
-    time_t now = time(nullptr);
-    if (now > 100000) {
-        struct tm t; localtime_r(&now, &t);
-        char tb[8]; snprintf(tb, sizeof(tb), "%02d:%02d", t.tm_hour, t.tm_min);
-        doc["time"] = tb;
-    }
+Set the address pins on each PCF8574:
 
-    extern class PriceData g_prices;
-    auto toJson = [&](const PriceEntry* e) -> JsonVariant {
-        JsonVariant v;
-        if (e) return JsonVariant((double)e->price_raw);
-        return JsonVariant();  // null
-    };
-    const PriceEntry* cur = g_prices.getCurrent(now);
-    const PriceEntry* prv = g_prices.getPrevious(now);
-    const PriceEntry* nxt = g_prices.getNext(now);
-    if (cur) doc["current"] = cur->price_raw; else doc["current"] = nullptr;
-    if (prv) doc["prev"]    = prv->price_raw; else doc["prev"]    = nullptr;
-    if (nxt) doc["next"]    = nxt->price_raw; else doc["next"]    = nullptr;
+| PCF8574 | A2 | A1 | A0 | Address | Drives relays |
+|---------|----|----|----|---------|----------------|
+| A       | GND | GND | GND | `0x20` | 1 to 8         |
+| B       | GND | GND | VCC | `0x21` | 9 to 16        |
 
-    JsonArray rs = doc["relays"].to<JsonArray>();
-    for (int i = 0; i < NUM_RELAYS; ++i) {
-        const RelayRule& r = _relays.rule(i);
-        JsonObject o = rs.add<JsonObject>();
-        o["name"] = r.name;
-        o["mode"] = (int)r.mode;
-        o["threshold"] = r.threshold;
-        o["state"] = r.state;
-    }
+If your PCF8574 breakouts have DIP switches / solder jumpers for the address
+pins, use those. If they're hardwired to `0x20`, one of them needs to be
+re-jumpered — it's usually a tiny solder bridge or a DIP switch on the back.
 
-    String out;
-    serializeJson(doc, out);
-    return out;
-}
+Each PCF8574's 8 outputs (P0–P7) then drive 8 relay inputs on the modified
+relay board. See "Relay board modification" below.
 
-void WebUI::begin() {
-    _server.on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/html; charset=utf-8", INDEX_HTML);
-    });
+### Relay board modification (Sirius-PCB 16 relay USB timer)
 
-    _server.on("/api/state", HTTP_GET, [this](AsyncWebServerRequest* req) {
-        req->send(200, "application/json", buildStateJson());
-    });
+The Sirius-PCB "16 relay USB timer" ships with a PIC18F2550 that implements
+a USB protocol we can't control from the ESP32 without additional USB-host
+hardware. The cleanest workaround is to desolder the PIC and drive the
+16 relay inputs directly from two PCF8574 expanders.
 
-    _server.on("/api/scan", HTTP_GET, [this](AsyncWebServerRequest* req) {
-        int n = WiFi.scanComplete();
-        if (n == WIFI_SCAN_FAILED || n == WIFI_SCAN_RUNNING) {
-            WiFi.scanNetworks(true);  // async
-            req->send(200, "application/json", "[]");
-            return;
-        }
-        JsonDocument doc;
-        JsonArray arr = doc.to<JsonArray>();
-        for (int i = 0; i < n; ++i) {
-            JsonObject o = arr.add<JsonObject>();
-            o["ssid"] = WiFi.SSID(i);
-            o["rssi"] = WiFi.RSSI(i);
-        }
-        WiFi.scanDelete();
-        WiFi.scanNetworks(true);  // kick off a fresh scan for next call
-        String s; serializeJson(doc, s);
-        req->send(200, "application/json", s);
-    });
+**Physical steps:**
 
-    _server.on("/api/wifi", HTTP_POST, [this](AsyncWebServerRequest* req) {
-        String ssid, pass;
-        if (req->hasParam("ssid", true)) ssid = req->getParam("ssid", true)->value();
-        if (req->hasParam("pass", true)) pass = req->getParam("pass", true)->value();
-        if (ssid.isEmpty()) { req->send(400, "text/plain", "Missing SSID"); return; }
-        req->send(200, "text/plain", "Saved. Attempting to connect…");
-        // Defer actual connect slightly so the response flushes
-        _net.setCredentials(ssid, pass);
-    });
+1. Desolder the PIC18F2550 from the board (or, if it's socketed, just pull
+   it out).
+2. Identify which PIC pins were driving the relay transistors — they'll be
+   the pins that go through a resistor to the base of a transistor (or to
+   a ULN2803 input if the board has one).
+3. Wire each of those 16 PIC pin pads to the corresponding PCF8574 output:
+   - PCF8574 A outputs `P0..P7` → relay inputs 1..8
+   - PCF8574 B outputs `P0..P7` → relay inputs 9..16
+4. Tie the original board's GND to the ESP32 / PCF8574 GND.
 
-    _server.on("/api/display", HTTP_POST, [this](AsyncWebServerRequest* req) {
-        if (req->hasParam("lang", true)) {
-            int l = req->getParam("lang", true)->value().toInt();
-            if (l >= 0 && l < LANG_COUNT) g_lang = (Lang)l;
-        }
-        if (req->hasParam("vat", true)) {
-            _ui.setVatPercent(req->getParam("vat", true)->value().toFloat());
-        }
-        if (req->hasParam("showvat", true)) {
-            _ui.setShowVat(req->getParam("showvat", true)->value() == "1");
-        }
-        Preferences p; p.begin(PREFS_NS, false);
-        p.putUChar("lang", (uint8_t)g_lang);
-        p.putFloat("vat", _ui.vatPercent());
-        p.putBool("showvat", _ui.showVat());
-        p.end();
-        _ui.drawAll();
-        req->send(200, "text/plain", "OK");
-    });
+**Important — check the polarity of the relay driver stage:**
 
-    _server.on("/api/relays", HTTP_POST,
-        [](AsyncWebServerRequest*){},
-        nullptr,
-        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (index != 0 || len != total) { req->send(400, "text/plain", "Chunked not supported"); return; }
-            JsonDocument doc;
-            if (deserializeJson(doc, data, len)) { req->send(400, "text/plain", "Bad JSON"); return; }
-            JsonObject root = doc.as<JsonObject>();
-            for (JsonPair kv : root) {
-                int i = String(kv.key().c_str()).toInt();
-                if (i < 0 || i >= NUM_RELAYS) continue;
-                JsonObject o = kv.value().as<JsonObject>();
-                RelayRule& r = _relays.rule(i);
-                if (o["name"].is<const char*>()) {
-                    const char* nm = o["name"];
-                    strncpy(r.name, nm, sizeof(r.name) - 1);
-                    r.name[sizeof(r.name) - 1] = 0;
-                }
-                if (o["mode"].is<int>()) r.mode = (RelayMode)(int)o["mode"];
-                if (o["threshold"].is<float>()) r.threshold = o["threshold"];
-            }
-            _relays.save();
-            _ui.drawAll();
-            req->send(200, "text/plain", "OK");
-        });
+- If the board uses a ULN2803 Darlington array (HIGH input = relay ON),
+  leave `RELAY_ACTIVE_LOW false` in `config.h`.
+- If the board uses an inverter stage (LOW input = relay ON), or discrete
+  PNP transistors pulled up, leave `RELAY_ACTIVE_LOW true` (the default).
 
-    _server.onNotFound([](AsyncWebServerRequest* req) {
-        req->send(404, "text/plain", "Not found");
-    });
+Get this wrong and all 16 relays will be inverted from what the UI shows —
+just flip the flag and reflash. No hardware damage.
 
-    _server.begin();
-    Serial.println("[WEB] HTTP server started on port 80");
-}
+The relay coils need their own 5 V or 12 V supply (depending on which
+relays are fitted on your board — Sirius ships with multiple variants). The
+original USB-B power path is no longer used; power the coils directly.
+
+### Power notes
+
+- Do not try to feed the 7-inch backlight off the ESP32's USB rail. Give the
+  shield its own 5 V supply and tie grounds together.
+- Some ER-AS-RA8875 revisions have a jumper / slide switch selecting between
+  external 5 V and Arduino-provided 5 V. Check yours and pick **external 5 V**.
+- If you see the ESP32 brown out on startup, you're almost certainly sharing
+  a supply that can't handle the backlight inrush.
+
+## Build
+
+1. Install PlatformIO (VS Code extension is easiest).
+2. Open this folder as a project.
+3. Connect the ESP32 via USB.
+4. `pio run -t upload`.
+5. Open the serial monitor at 115200 baud.
+
+## First run
+
+First boot → AP mode, because there are no saved Wi-Fi credentials. The header
+will show `Setup Mode 192.168.4.1`.
+
+1. Join Wi-Fi network `NordpoolMonitor` (password `nordpool123`).
+2. Browse to `http://192.168.4.1`, pick your home Wi-Fi, enter the password,
+   press **Connect**.
+3. The device reconnects to your router; the header updates with the new IP.
+4. Reconnect your phone to your normal Wi-Fi and open that IP to configure
+   language, VAT, and per-relay rules.
+
+## Touch calibration
+
+The RA8875's built-in resistive touch returns raw 10-bit ADC values. The
+defaults in `config.h` work for most ER-TFTM070-5 panels, but if your touch
+is offset or stretched, adjust these four numbers until the corners of the
+screen map to the corners of the touch area:
+
+```c
+#define TOUCH_X_MIN 120
+#define TOUCH_X_MAX 930
+#define TOUCH_Y_MIN 100
+#define TOUCH_Y_MAX 930
+```
+
+The easy way to find the right values: temporarily add `Serial.printf("raw %d %d\n", rx, ry);`
+inside `handleTouch()` in `main.cpp`, touch each screen corner, and read the
+raw values off the serial monitor. Plug those into `config.h` and rebuild.
+
+## Usage
+
+- **Main screen** — prev / current / next hour prices, then a colored 48-hour
+  bar chart with the current hour highlighted in light blue, then a row of
+  today's stats (avg / min / max) and last-update time.
+- **Double-tap anywhere** on the main screen → relay configuration screen.
+- **Tap a relay tile** → edit its mode and threshold on the touchscreen.
+  Modes:
+  - *Always OFF / Always ON* — ignore price
+  - *ON below* — energised while current price ≤ threshold
+  - *OFF above* — de-energised once current price crosses threshold
+- Thresholds are always stored in EUR/kWh **without VAT**, so relay behaviour
+  doesn't shift when you toggle the "Show with VAT" display setting.
+
+## Project layout
+
+```
+nordpool-monitor/
+├── platformio.ini          RA8875 + AsyncWebServer + PCF8574 + ArduinoJson
+├── include/
+│   ├── config.h            All tunable constants (pins, URLs, TZ, touch cal)
+│   ├── i18n.h              EN / LV / RU string table
+│   ├── price_data.h
+│   ├── relay_controller.h
+│   ├── ui.h                RA8875-based renderer
+│   ├── net_manager.h
+│   └── web_server.h
+└── src/
+    ├── main.cpp            RA8875 init + resistive touch reading
+    ├── price_data.cpp
+    ├── relay_controller.cpp
+    ├── ui.cpp
+    ├── net_manager.cpp
+    └── web_server.cpp
+```
+
+## Troubleshooting
+
+### Blank screen / `RA8875 not found — check wiring / power`
+
+- Check MISO wiring — the RA8875 initialization reads back a register value
+  over SPI to confirm the chip is alive. Bad MISO wiring = init failure.
+- Check 5 V supply to the shield — the RA8875 runs off an on-shield regulator
+  fed from 5 V. If the ESP32 is powered but the shield isn't, init fails.
+- If `begin(RA8875_800x480)` returns `false`, the library didn't find the
+  chip. Double-check CS and RST pins in `config.h`.
+
+### Touch fires on the wrong spots
+
+- Adjust `TOUCH_X_MIN`..`TOUCH_Y_MAX` in `config.h` (see calibration section).
+- Some panels have the X axis mirrored relative to the display. If tapping
+  the left edge fires on the right, swap `TOUCH_X_MIN` and `TOUCH_X_MAX` in
+  `config.h` (the subtraction in `mapTouch()` handles the sign flip).
+
+### Backlight PWM flickers
+
+- `PWM1out(255)` = full brightness. If you see flicker at lower values it's
+  usually a weak shared supply; switch to a dedicated 5 V brick.
+
+### Text looks blocky at large sizes
+
+- The RA8875's built-in font is a bitmap font with 1×/2×/3×/4× scaling — the
+  big "current price" digits are the 4× scale. This is expected. If you want
+  smoother large numbers, the Adafruit library supports GFX-style fonts via
+  `setTextSize()` + GFX font files, at the cost of slower rendering. That's
+  a drop-in upgrade path if you want it later.
