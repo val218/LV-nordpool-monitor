@@ -1,119 +1,100 @@
-// ui.h — LVGL dashboard for the JC4827W543 480×272 panel.
+// i18n.h — simple three-language string table (EN / LV / RU)
 #pragma once
 
 #include <Arduino.h>
-#include <lvgl.h>
-#include "price_data.h"
-#include "relay_controller.h"
 
-class UI {
-public:
-    UI(PriceData& prices, RelayController& relays);
-    void begin();
-
-    // Push fresh state from price feed / clock / wifi into LVGL widgets.
-    // Cheap to call repeatedly; widgets only redraw if something changed.
-    void refresh();
-
-    // Force a full re-render of the current screen. Call this after settings
-    // changes (VAT, language) where many labels might be stale at once.
-    void redraw() { refresh(); }
-
-    void setWifiConnected(bool c);
-    void setIpString(const String& ip);
-    void setConfigMode(bool c);
-
-    void setShowVat(bool v);
-    void setVatPercent(float v);
-    bool  showVat() const     { return _showVat; }
-    float vatPercent() const  { return _vat; }
-
-private:
-    PriceData&       _prices;
-    RelayController& _relays;
-
-    bool _wifi = false;
-    bool _configMode = false;
-    bool _showVat = true;
-    float _vat = 21.0f;
-    String _ip = "";
-
-    // ---- Screens ----
-    lv_obj_t* _scrMain     = nullptr;
-    lv_obj_t* _scrRelays   = nullptr;
-    lv_obj_t* _scrEdit     = nullptr;
-    int       _editIdx     = 0;
-
-    // ---- Main screen widgets ----
-    lv_obj_t* _hdrTitle    = nullptr;
-    lv_obj_t* _hdrStatus   = nullptr;   // small dot
-    lv_obj_t* _hdrIp       = nullptr;
-    lv_obj_t* _hdrClock    = nullptr;
-    lv_obj_t* _hdrDate     = nullptr;
-
-    lv_obj_t* _cardPrev    = nullptr;
-    lv_obj_t* _cardCur     = nullptr;
-    lv_obj_t* _cardNext    = nullptr;
-    lv_obj_t* _lblPrev     = nullptr;
-    lv_obj_t* _lblCur      = nullptr;
-    lv_obj_t* _lblNext     = nullptr;
-
-    lv_obj_t* _chart       = nullptr;
-    lv_chart_series_t* _chartSeries = nullptr;
-    lv_obj_t* _chartUnits  = nullptr;
-    lv_obj_t* _chartNowMarker = nullptr;
-
-    lv_obj_t* _statAvg     = nullptr;
-    lv_obj_t* _statMin     = nullptr;
-    lv_obj_t* _statMax     = nullptr;
-    lv_obj_t* _statUpd     = nullptr;
-
-    String _lastClock;
-    int    _lastNowIdx = -1;
-
-    // ---- Relay screen widgets ----
-    struct RelayTile {
-        lv_obj_t* card;
-        lv_obj_t* name;
-        lv_obj_t* state;
-        lv_obj_t* mode;
-        lv_obj_t* threshold;
-    };
-    RelayTile _tiles[NUM_RELAYS] = {};
-
-    // ---- Edit screen widgets ----
-    lv_obj_t* _editTitle   = nullptr;
-    lv_obj_t* _modeBtns[4] = {};
-    lv_obj_t* _editValueLabel = nullptr;
-
-    // ---- Construction helpers ----
-    void buildMain();
-    void buildRelays();
-    void buildEdit();
-
-    void refreshHeader();
-    void refreshPriceCards();
-    void refreshChart();
-    void refreshStats();
-    void refreshRelayTiles();
-    void refreshEdit();
-
-    String currentTimeString() const;
-    String dateString() const;
-    String formatPrice(float raw) const;
-    String unitsLabel() const;
-    lv_color_t colorForPrice(float p, float mn, float mx) const;
-
-    // ---- Event handlers (static thunks) ----
-    static void onMainTouched(lv_event_t* e);
-    static void onRelayTileTouched(lv_event_t* e);
-    static void onBackToMainTouched(lv_event_t* e);
-    static void onBackToRelaysTouched(lv_event_t* e);
-    static void onModeBtnTouched(lv_event_t* e);
-    static void onMinusTouched(lv_event_t* e);
-    static void onPlusTouched(lv_event_t* e);
-
-    void openRelays();
-    void openEdit(int idx);
-    void openMain();
+enum Lang : uint8_t {
+    LANG_EN = 0,
+    LANG_LV = 1,
+    LANG_RU = 2,
+    LANG_COUNT
 };
+
+enum StrKey : uint16_t {
+    S_TITLE = 0,
+    S_CURRENT,
+    S_PREV,
+    S_NEXT,
+    S_CONNECTED,
+    S_OFFLINE,
+    S_CONFIG_MODE,
+    S_RELAYS,
+    S_RELAY,
+    S_MODE,
+    S_OFF,
+    S_ON,
+    S_MAX_PRICE,
+    S_MIN_PRICE,
+    S_ALWAYS_OFF,
+    S_ALWAYS_ON,
+    S_THRESHOLD,
+    S_STATE,
+    S_LAST_UPDATE,
+    S_SETTINGS,
+    S_WIFI,
+    S_LANGUAGE,
+    S_VAT,
+    S_SHOW_VAT,
+    S_BACK,
+    S_SAVE,
+    S_SSID,
+    S_PASSWORD,
+    S_CONNECT,
+    S_NO_DATA,
+    S_LOADING,
+    S_PRICES_TODAY,
+    S_PRICES_TOMORROW,
+    S_EUR_PER_KWH,
+    S_CENTS_PER_KWH,
+    S_TURN_ON_BELOW,
+    S_TURN_OFF_ABOVE,
+    S_NUM_STRINGS
+};
+
+// Translation table: [key][lang]
+static const char* const TRANSLATIONS[S_NUM_STRINGS][LANG_COUNT] = {
+    /* S_TITLE */           { "Nordpool Monitor", "Nordpool Monitors", "Монитор Nordpool" },
+    /* S_CURRENT */         { "Current",          "Tagad",             "Сейчас" },
+    /* S_PREV */            { "Prev",             "Iepr.",             "Пред." },
+    /* S_NEXT */            { "Next",             "Nāk.",              "След." },
+    /* S_CONNECTED */       { "Online",           "Tiešsaiste",        "Онлайн" },
+    /* S_OFFLINE */         { "Offline",          "Bezsaiste",         "Оффлайн" },
+    /* S_CONFIG_MODE */     { "Setup Mode",       "Iestat. rezīms",    "Режим настройки" },
+    /* S_RELAYS */          { "Relays",           "Releji",            "Реле" },
+    /* S_RELAY */           { "Relay",            "Relejs",            "Реле" },
+    /* S_MODE */            { "Mode",             "Režīms",            "Режим" },
+    /* S_OFF */             { "OFF",              "IZSL",              "ВЫКЛ" },
+    /* S_ON */              { "ON",               "IESL",              "ВКЛ" },
+    /* S_MAX_PRICE */       { "Max Price",        "Maks. cena",        "Макс. цена" },
+    /* S_MIN_PRICE */       { "Min Price",        "Min. cena",         "Мин. цена" },
+    /* S_ALWAYS_OFF */      { "Always OFF",       "Vienmēr IZSL",      "Всегда ВЫКЛ" },
+    /* S_ALWAYS_ON */       { "Always ON",        "Vienmēr IESL",      "Всегда ВКЛ" },
+    /* S_THRESHOLD */       { "Threshold",        "Slieksnis",         "Порог" },
+    /* S_STATE */           { "State",            "Stāvoklis",         "Состояние" },
+    /* S_LAST_UPDATE */     { "Updated",          "Atjaun.",           "Обновл." },
+    /* S_SETTINGS */        { "Settings",         "Iestatījumi",       "Настройки" },
+    /* S_WIFI */            { "Wi-Fi",            "Wi-Fi",             "Wi-Fi" },
+    /* S_LANGUAGE */        { "Language",         "Valoda",            "Язык" },
+    /* S_VAT */             { "VAT %",            "PVN %",             "НДС %" },
+    /* S_SHOW_VAT */        { "Show with VAT",    "Rādīt ar PVN",      "Показать с НДС" },
+    /* S_BACK */            { "Back",             "Atpakaļ",           "Назад" },
+    /* S_SAVE */            { "Save",             "Saglabāt",          "Сохранить" },
+    /* S_SSID */            { "SSID",             "SSID",              "SSID" },
+    /* S_PASSWORD */        { "Password",         "Parole",            "Пароль" },
+    /* S_CONNECT */         { "Connect",          "Savienot",          "Подключить" },
+    /* S_NO_DATA */         { "No data",          "Nav datu",          "Нет данных" },
+    /* S_LOADING */         { "Loading...",       "Ielādē...",         "Загрузка..." },
+    /* S_PRICES_TODAY */    { "Today",            "Šodien",            "Сегодня" },
+    /* S_PRICES_TOMORROW */ { "Tomorrow",         "Rīt",               "Завтра" },
+    /* S_EUR_PER_KWH */     { "EUR/kWh",          "EUR/kWh",           "EUR/кВтч" },
+    /* S_CENTS_PER_KWH */   { "c/kWh",            "c/kWh",             "ц/кВтч" },
+    /* S_TURN_ON_BELOW */   { "ON below",         "IESL zem",          "ВКЛ ниже" },
+    /* S_TURN_OFF_ABOVE */  { "OFF above",        "IZSL virs",         "ВЫКЛ выше" },
+};
+
+extern Lang g_lang;
+
+inline const char* T(StrKey k) {
+    if (k >= S_NUM_STRINGS) return "";
+    return TRANSLATIONS[k][g_lang];
+}
