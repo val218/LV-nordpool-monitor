@@ -95,11 +95,11 @@ private:
 
     // ---- Edit screen widgets ----
     lv_obj_t* _editTitle   = nullptr;
-    lv_obj_t* _modeBtns[3] = {};                   // ALWAYS_OFF, ALWAYS_ON, AUTO
+    lv_obj_t* _modeBtns[4] = {};                   // OFF, ON, PRICE, AUTO
     lv_obj_t* _editOnBelowVal  = nullptr;          // value label for the ON_BELOW spinner
     lv_obj_t* _editOffAboveVal = nullptr;          // value label for the OFF_ABOVE spinner
-    lv_obj_t* _editOnBelowRow  = nullptr;          // container for ON_BELOW spinner — hidden in non-AUTO modes
-    lv_obj_t* _editOffAboveRow = nullptr;          // container for OFF_ABOVE spinner — hidden in non-AUTO modes
+    lv_obj_t* _editOnBelowRow  = nullptr;          // container for ON_BELOW spinner — hidden in non-AUTO/non-PRICE modes
+    lv_obj_t* _editOffAboveRow = nullptr;          // container for OFF_ABOVE spinner — visible only in AUTO mode
     lv_obj_t* _editHysteresisLbl = nullptr;        // small caption that explains the gap (or shows "no hysteresis")
     lv_obj_t* _editIconBtn    = nullptr;     // tap to open icon picker
     lv_obj_t* _editIconLabel  = nullptr;     // shows the chosen icon glyph

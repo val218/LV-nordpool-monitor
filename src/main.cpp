@@ -295,6 +295,12 @@ void loop() {
         s_lastRelayEval = now;
     }
 
+    // tick() drains the staggered turn-on queue. evaluate() above only
+    // marks relays as wanting to turn on; tick() commits one per
+    // RELAY_STAGGER_SEC seconds. We run this every loop iteration —
+    // it's cheap (early-returns when nothing's queued).
+    g_relays.tick();
+
     // 250 ms cadence keeps the chart "now" indicator gliding smoothly
     // across the chart and the clock/status indicators promptly accurate
     // without hammering the CPU. Each refresh call is cheap — most widgets

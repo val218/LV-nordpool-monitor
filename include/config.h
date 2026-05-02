@@ -56,6 +56,15 @@
 #define PRICE_REFRESH_MS (30UL * 60UL * 1000UL)
 #define RELAY_EVAL_MS    (60UL * 1000UL)
 
+// When the price evaluator decides to turn ON multiple relays in the
+// same cycle, we space those switch-ons out by this many seconds. This
+// prevents inrush spikes from several heating loads kicking in at once
+// and gives the inverter / breaker time to recover. Turn-OFFs are NOT
+// staggered — when prices go high we want every load shed immediately.
+//
+// Set to 0 to disable staggering entirely (instant switching).
+#define RELAY_STAGGER_SEC  5
+
 // ---- VAT ----
 #define DEFAULT_VAT_PERCENT 21.0f
 

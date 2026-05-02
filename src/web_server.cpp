@@ -304,11 +304,13 @@ function iconHtml(iconId) {
 function renderRelays(rs) {
   const el = document.getElementById('relays');
   el.innerHTML = '';
-  const modes = ['Always OFF', 'Always ON', 'Auto'];
+  const modes = ['Always OFF', 'Always ON', 'Price', 'Auto'];
+  // Mode codes: 0=OFF, 1=ON, 2=PRICE, 3=AUTO
+  const showOn  = m => (m === 2 || m === 3);
+  const showOff = m => (m === 3);
   rs.forEach((r, i) => {
-    const isAuto = (r.mode === 2);
     const onBelow  = (r.on_below  != null ? r.on_below  : r.threshold || 0.10);
-    const offAbove = (r.off_above != null ? r.off_above : r.threshold || 0.10);
+    const offAbove = (r.off_above != null ? r.off_above : r.threshold || 0.12);
     const div = document.createElement('div');
     div.className = 'relay';
     div.innerHTML = `
@@ -325,12 +327,14 @@ function renderRelays(rs) {
       <select data-i="${i}" data-k="mode">
         ${modes.map((m,idx)=>`<option value="${idx}" ${r.mode==idx?'selected':''}>${m}</option>`).join('')}
       </select>
-      <div class="thresholds" style="display:${isAuto?'block':'none'}">
+      <div class="row-on-below" style="display:${showOn(r.mode)?'block':'none'}">
         <label>ON below (c/kWh)</label>
         <input data-i="${i}" data-k="on_below" type="number" step="0.1" min="0" max="200" value="${(onBelow*100).toFixed(1)}">
+      </div>
+      <div class="row-off-above" style="display:${showOff(r.mode)?'block':'none'}">
         <label>OFF above (c/kWh)</label>
         <input data-i="${i}" data-k="off_above" type="number" step="0.1" min="0" max="200" value="${(offAbove*100).toFixed(1)}">
-        <small style="color:#888;display:block;margin-top:4px">Set ON below ≤ OFF above. The gap between them is the hysteresis (price has to rise above OFF before the relay switches off, and drop below ON before it switches on again). Set both equal for a simple single-threshold switch.</small>
+        <small style="color:#888;display:block;margin-top:4px">Hysteresis: price must rise above OFF before the relay switches off, and drop below ON before it switches on again. Set ON ≤ OFF. For zero hysteresis use Price mode instead.</small>
       </div>
     `;
     el.appendChild(div);
@@ -339,13 +343,15 @@ function renderRelays(rs) {
   document.querySelectorAll('.relay-icon[data-icon-i]').forEach(el => {
     el.addEventListener('click', () => openIconModal(parseInt(el.dataset.iconI)));
   });
-  // Toggle thresholds visibility when mode changes
+  // Toggle row visibility when mode changes
   document.querySelectorAll('select[data-k="mode"]').forEach(sel => {
     sel.addEventListener('change', () => {
-      const i = parseInt(sel.dataset.i);
+      const v = parseInt(sel.value);
       const card = sel.closest('.relay');
-      const t = card.querySelector('.thresholds');
-      if (t) t.style.display = (parseInt(sel.value) === 2) ? 'block' : 'none';
+      const onR  = card.querySelector('.row-on-below');
+      const offR = card.querySelector('.row-off-above');
+      if (onR)  onR.style.display  = showOn(v)  ? 'block' : 'none';
+      if (offR) offR.style.display = showOff(v) ? 'block' : 'none';
     });
   });
 }
@@ -609,10 +615,9 @@ void WebUI::begin() {
                 }
                 if (o["mode"].is<int>()) {
                     int m = o["mode"];
-                    // Migrate legacy modes (2 = ON_BELOW, 3 = OFF_ABOVE)
-                    // to the new RMODE_AUTO.
-                    if (m == 2 || m == 3) m = (int)RMODE_AUTO;
-                    if (m < 0 || m > (int)RMODE_AUTO) m = (int)RMODE_ALWAYS_OFF;
+                    // New mode namespace: 0=OFF, 1=ON, 2=PRICE, 3=AUTO.
+                    // Anything outside this range falls back to OFF.
+                    if (m < 0 || m > (int)RMODE_AUTO) m = (int)RMODE_OFF;
                     r.mode = (RelayMode)m;
                 }
                 // Accept the new field names; fall back to legacy "threshold"

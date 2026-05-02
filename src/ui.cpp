@@ -404,12 +404,15 @@ void UI::buildEdit() {
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(back, onBackToRelaysTouched, LV_EVENT_CLICKED, this);
 
-    // ---- 3 mode buttons across the top ----
-    const char* labels[3] = { T(S_ALWAYS_OFF), T(S_ALWAYS_ON), T(S_AUTO) };
+    // ---- 4 mode buttons across the top ----
+    // Order chosen for ascending complexity: OFF -> ON -> PRICE (single
+    // threshold, no hysteresis) -> AUTO (two thresholds with hysteresis).
+    const char* labels[4] = { T(S_ALWAYS_OFF), T(S_ALWAYS_ON),
+                              T(S_PRICE),       T(S_AUTO) };
     int btnY = 36, btnH = 40;
     int gap = 6;
-    int btnW = (DISP_W - 4 * gap) / 3;
-    for (int m = 0; m < 3; ++m) {
+    int btnW = (DISP_W - 5 * gap) / 4;
+    for (int m = 0; m < 4; ++m) {
         int bx = gap + m * (btnW + gap);
         lv_obj_t* b = makeCard(_scrEdit, bx, btnY, btnW, btnH);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
@@ -541,7 +544,7 @@ void UI::redraw() {
     _statAvg = _statMin = _statMax = _statUpd = nullptr;
     for (int i = 0; i < NUM_RELAYS; ++i) _tiles[i] = {};
     _editTitle = _editIconBtn = _editIconLabel = nullptr;
-    for (int i = 0; i < 3; ++i) _modeBtns[i] = nullptr;
+    for (int i = 0; i < 4; ++i) _modeBtns[i] = nullptr;
     _editOnBelowVal = _editOffAboveVal = nullptr;
     _editOnBelowRow = _editOffAboveRow = nullptr;
     _editHysteresisLbl = nullptr;
@@ -820,16 +823,22 @@ void UI::refreshRelayTiles() {
 
         const char* m = "";
         switch (rr.mode) {
-            case RMODE_ALWAYS_OFF: m = T(S_ALWAYS_OFF); break;
-            case RMODE_ALWAYS_ON:  m = T(S_ALWAYS_ON);  break;
-            case RMODE_AUTO:       m = T(S_AUTO);       break;
+            case RMODE_OFF:   m = T(S_ALWAYS_OFF); break;
+            case RMODE_ON:    m = T(S_ALWAYS_ON);  break;
+            case RMODE_PRICE: m = T(S_PRICE);      break;
+            case RMODE_AUTO:  m = T(S_AUTO);       break;
         }
         lv_label_set_text(tt.mode, m);
 
-        if (rr.mode == RMODE_AUTO) {
+        if (rr.mode == RMODE_PRICE) {
+            // Single-threshold mode — show just the on_below value.
+            char b[16];
+            snprintf(b, sizeof(b), "%.1f c", rr.on_below * 100.0f);
+            lv_label_set_text(tt.threshold, b);
+        } else if (rr.mode == RMODE_AUTO) {
             char b[24];
-            // If both thresholds are equal, show one number to keep the
-            // tile uncluttered. Otherwise show "ON / OFF" pair.
+            // If both thresholds happen to be equal, show one number to
+            // keep the tile uncluttered. Otherwise show "ON / OFF" pair.
             if (fabsf(rr.on_below - rr.off_above) < 0.0001f) {
                 snprintf(b, sizeof(b), "%.1f c", rr.on_below * 100.0f);
             } else {
@@ -857,36 +866,47 @@ void UI::refreshEdit() {
     lv_label_set_text(_editTitle, title);
 
     // Highlight the active mode button.
-    for (int m = 0; m < 3; ++m) {
+    for (int m = 0; m < 4; ++m) {
         bool active = (int)rr.mode == m;
         lv_obj_set_style_bg_color(_modeBtns[m],
             active ? COL_NOWBAR : COL_CARD, 0);
     }
 
-    // Threshold rows are visible only in AUTO mode.
-    bool autoMode = (rr.mode == RMODE_AUTO);
+    // Visibility of the threshold rows depends on the mode:
+    //   OFF / ON  -> both rows hidden
+    //   PRICE     -> on_below row visible (acts as a single threshold);
+    //                off_above row hidden
+    //   AUTO      -> both rows visible
+    bool showOn  = (rr.mode == RMODE_PRICE || rr.mode == RMODE_AUTO);
+    bool showOff = (rr.mode == RMODE_AUTO);
+
     if (_editOnBelowRow) {
-        if (autoMode) lv_obj_clear_flag(_editOnBelowRow,  LV_OBJ_FLAG_HIDDEN);
-        else          lv_obj_add_flag  (_editOnBelowRow,  LV_OBJ_FLAG_HIDDEN);
+        if (showOn) lv_obj_clear_flag(_editOnBelowRow, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag  (_editOnBelowRow, LV_OBJ_FLAG_HIDDEN);
     }
     if (_editOffAboveRow) {
-        if (autoMode) lv_obj_clear_flag(_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
-        else          lv_obj_add_flag  (_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
+        if (showOff) lv_obj_clear_flag(_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
+        else         lv_obj_add_flag  (_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (autoMode) {
+    if (showOn && _editOnBelowVal) {
         char vb[32];
-        snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.on_below  * 100.0f);
-        lv_label_set_text(_editOnBelowVal,  vb);
+        snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.on_below * 100.0f);
+        lv_label_set_text(_editOnBelowVal, vb);
+    }
+    if (showOff && _editOffAboveVal) {
+        char vb[32];
         snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.off_above * 100.0f);
         lv_label_set_text(_editOffAboveVal, vb);
     }
 
-    // Hysteresis hint at the bottom: visible only in AUTO mode.
+    // Hysteresis hint at the bottom — only meaningful in AUTO mode.
+    // In PRICE mode we instead show a small note that there's no
+    // hysteresis (so the user understands why there's only one input).
     if (_editHysteresisLbl) {
-        if (autoMode) {
+        char hb[64];
+        if (rr.mode == RMODE_AUTO) {
             float gap = rr.off_above - rr.on_below;
-            char hb[64];
             if (gap > 0.0001f) {
                 snprintf(hb, sizeof(hb), "%s: %.1f c/kWh",
                          T(S_HYSTERESIS), gap * 100.0f);
@@ -900,6 +920,11 @@ void UI::refreshEdit() {
                 snprintf(hb, sizeof(hb), "%s: 0 c/kWh", T(S_HYSTERESIS));
                 lv_obj_set_style_text_color(_editHysteresisLbl, COL_DIM, 0);
             }
+            lv_label_set_text(_editHysteresisLbl, hb);
+            lv_obj_clear_flag(_editHysteresisLbl, LV_OBJ_FLAG_HIDDEN);
+        } else if (rr.mode == RMODE_PRICE) {
+            snprintf(hb, sizeof(hb), "%s: 0 c/kWh", T(S_HYSTERESIS));
+            lv_obj_set_style_text_color(_editHysteresisLbl, COL_DIM, 0);
             lv_label_set_text(_editHysteresisLbl, hb);
             lv_obj_clear_flag(_editHysteresisLbl, LV_OBJ_FLAG_HIDDEN);
         } else {
