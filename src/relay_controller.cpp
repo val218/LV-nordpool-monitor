@@ -3,10 +3,11 @@
 
 RelayController::RelayController() : _xl(XL9535_I2C_ADDR) {
     for (int i = 0; i < NUM_RELAYS; ++i) {
-        _rules[i].mode = RMODE_ALWAYS_OFF;
-        _rules[i].threshold = 0.10f;
-        _rules[i].state = false;
-        _rules[i].icon = 0;   // ICON_GENERIC
+        _rules[i].mode      = RMODE_ALWAYS_OFF;
+        _rules[i].on_below  = 0.10f;   // turn on when price <= 10 c/kWh
+        _rules[i].off_above = 0.10f;   // and off when >= same value (no hysteresis by default)
+        _rules[i].state     = false;
+        _rules[i].icon      = 0;       // ICON_GENERIC
         snprintf(_rules[i].name, sizeof(_rules[i].name), "Relay %d", i + 1);
     }
 }
@@ -49,11 +50,17 @@ void RelayController::evaluate(float priceRaw) {
         switch (r.mode) {
             case RMODE_ALWAYS_OFF: newState = false; break;
             case RMODE_ALWAYS_ON:  newState = true;  break;
-            case RMODE_ON_BELOW:
-                if (priceRaw >= 0) newState = (priceRaw <= r.threshold);
-                break;
-            case RMODE_OFF_ABOVE:
-                if (priceRaw >= 0) newState = (priceRaw < r.threshold);
+            case RMODE_AUTO:
+                if (priceRaw < 0) break;  // no data — hold previous state
+                // Hysteresis. When the two thresholds are equal this still
+                // works as a clean single-threshold switch (ON when price
+                // is at or below the threshold, OFF when above).
+                if (priceRaw <= r.on_below) {
+                    newState = true;
+                } else if (priceRaw >= r.off_above) {
+                    newState = false;
+                }
+                // Between on_below and off_above: hold previous state.
                 break;
         }
         if (newState != r.state) {
@@ -70,9 +77,31 @@ void RelayController::load() {
     for (int i = 0; i < NUM_RELAYS; ++i) {
         char key[8];
         snprintf(key, sizeof(key), "rm%d", i);
-        _rules[i].mode = (RelayMode)p.getUChar(key, RMODE_ALWAYS_OFF);
-        snprintf(key, sizeof(key), "rt%d", i);
-        _rules[i].threshold = p.getFloat(key, 0.10f);
+        uint8_t mode = p.getUChar(key, RMODE_ALWAYS_OFF);
+        // Migrate legacy modes (when 0..3 was the enum and threshold was a
+        // single float). Any saved value of 2 (was ON_BELOW) or 3 (was
+        // OFF_ABOVE) becomes RMODE_AUTO with both thresholds equal — same
+        // behavior as the old single-threshold rule.
+        if (mode == 3) mode = RMODE_AUTO;     // OFF_ABOVE -> AUTO
+        if (mode == 2) mode = RMODE_AUTO;     // ON_BELOW  -> AUTO
+        if (mode > RMODE_AUTO) mode = RMODE_ALWAYS_OFF;
+        _rules[i].mode = (RelayMode)mode;
+
+        // Try the new keys first; fall back to legacy "rt" (threshold) key
+        // so existing devices upgrade smoothly.
+        snprintf(key, sizeof(key), "rb%d", i);
+        float onBelow = p.getFloat(key, NAN);
+        snprintf(key, sizeof(key), "ra%d", i);
+        float offAbove = p.getFloat(key, NAN);
+        if (isnan(onBelow) || isnan(offAbove)) {
+            snprintf(key, sizeof(key), "rt%d", i);
+            float legacy = p.getFloat(key, 0.10f);
+            if (isnan(onBelow))  onBelow  = legacy;
+            if (isnan(offAbove)) offAbove = legacy;
+        }
+        _rules[i].on_below  = onBelow;
+        _rules[i].off_above = offAbove;
+
         snprintf(key, sizeof(key), "rn%d", i);
         String nm = p.getString(key, "");
         if (nm.length()) {
@@ -92,8 +121,10 @@ void RelayController::save() {
         char key[8];
         snprintf(key, sizeof(key), "rm%d", i);
         p.putUChar(key, (uint8_t)_rules[i].mode);
-        snprintf(key, sizeof(key), "rt%d", i);
-        p.putFloat(key, _rules[i].threshold);
+        snprintf(key, sizeof(key), "rb%d", i);
+        p.putFloat(key, _rules[i].on_below);
+        snprintf(key, sizeof(key), "ra%d", i);
+        p.putFloat(key, _rules[i].off_above);
         snprintf(key, sizeof(key), "rn%d", i);
         p.putString(key, _rules[i].name);
         snprintf(key, sizeof(key), "ri%d", i);

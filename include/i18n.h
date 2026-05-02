@@ -49,6 +49,8 @@ enum StrKey : uint16_t {
     S_CENTS_PER_KWH,
     S_TURN_ON_BELOW,
     S_TURN_OFF_ABOVE,
+    S_AUTO,
+    S_HYSTERESIS,
     S_NUM_STRINGS
 };
 
@@ -92,6 +94,8 @@ static const char* const TRANSLATIONS[S_NUM_STRINGS][LANG_COUNT] = {
     /* S_CENTS_PER_KWH */   { "c/kWh",            "c/kWh",             "ц/кВтч" },
     /* S_TURN_ON_BELOW */   { "ON below",         "IESL zem",          "ВКЛ ниже" },
     /* S_TURN_OFF_ABOVE */  { "OFF above",        "IZSL virs",         "ВЫКЛ выше" },
+    /* S_AUTO */            { "Auto",             "Auto",              "Авто" },
+    /* S_HYSTERESIS */      { "Hysteresis",       "Histerēze",         "Гистерезис" },
 };
 
 extern Lang g_lang;

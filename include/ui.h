@@ -65,12 +65,14 @@ private:
     lv_obj_t* _chart       = nullptr;
     lv_chart_series_t* _chartSeries = nullptr;
     lv_obj_t* _chartUnits  = nullptr;
-    lv_obj_t* _chartNowMarker = nullptr;
+    lv_obj_t* _chartNowMarker = nullptr;     // thin light-blue vertical line — current time
+    lv_obj_t* _chartHourLbls[8] = {};        // "06", "12", "18", "00", "06", "12", "18", "00" labels under the 6h grid lines
     lv_obj_t* _chartAvgLine = nullptr;       // dashed average line overlay
     float     _chartMin = 0, _chartMax = 0, _chartAvg = 0;
     int       _chartFirstIdx = -1;           // first price entry shown in chart
     int       _chartLastIdx  = -1;
     int       _chartNowIdx   = -1;
+    lv_obj_t* _chartCard   = nullptr;        // parent card of _chart — used for absolute positioning of overlays
 
     lv_obj_t* _statAvg     = nullptr;
     lv_obj_t* _statMin     = nullptr;
@@ -93,8 +95,12 @@ private:
 
     // ---- Edit screen widgets ----
     lv_obj_t* _editTitle   = nullptr;
-    lv_obj_t* _modeBtns[4] = {};
-    lv_obj_t* _editValueLabel = nullptr;
+    lv_obj_t* _modeBtns[3] = {};                   // ALWAYS_OFF, ALWAYS_ON, AUTO
+    lv_obj_t* _editOnBelowVal  = nullptr;          // value label for the ON_BELOW spinner
+    lv_obj_t* _editOffAboveVal = nullptr;          // value label for the OFF_ABOVE spinner
+    lv_obj_t* _editOnBelowRow  = nullptr;          // container for ON_BELOW spinner — hidden in non-AUTO modes
+    lv_obj_t* _editOffAboveRow = nullptr;          // container for OFF_ABOVE spinner — hidden in non-AUTO modes
+    lv_obj_t* _editHysteresisLbl = nullptr;        // small caption that explains the gap (or shows "no hysteresis")
     lv_obj_t* _editIconBtn    = nullptr;     // tap to open icon picker
     lv_obj_t* _editIconLabel  = nullptr;     // shows the chosen icon glyph
 
@@ -123,6 +129,7 @@ private:
     void refreshHeader();
     void refreshPriceCards();
     void refreshChart();
+    void refreshChartOverlays();   // place "now" line + 6h hour labels (cheap, called every refresh tick)
     void refreshStats();
     void refreshRelayTiles();
     void refreshEdit();

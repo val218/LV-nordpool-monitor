@@ -304,8 +304,11 @@ function iconHtml(iconId) {
 function renderRelays(rs) {
   const el = document.getElementById('relays');
   el.innerHTML = '';
-  const modes = ['Always OFF', 'Always ON', 'ON below', 'OFF above'];
+  const modes = ['Always OFF', 'Always ON', 'Auto'];
   rs.forEach((r, i) => {
+    const isAuto = (r.mode === 2);
+    const onBelow  = (r.on_below  != null ? r.on_below  : r.threshold || 0.10);
+    const offAbove = (r.off_above != null ? r.off_above : r.threshold || 0.10);
     const div = document.createElement('div');
     div.className = 'relay';
     div.innerHTML = `
@@ -322,14 +325,28 @@ function renderRelays(rs) {
       <select data-i="${i}" data-k="mode">
         ${modes.map((m,idx)=>`<option value="${idx}" ${r.mode==idx?'selected':''}>${m}</option>`).join('')}
       </select>
-      <label>Threshold (c/kWh)</label>
-      <input data-i="${i}" data-k="threshold" type="number" step="0.1" min="0" max="200" value="${(r.threshold*100).toFixed(1)}">
+      <div class="thresholds" style="display:${isAuto?'block':'none'}">
+        <label>ON below (c/kWh)</label>
+        <input data-i="${i}" data-k="on_below" type="number" step="0.1" min="0" max="200" value="${(onBelow*100).toFixed(1)}">
+        <label>OFF above (c/kWh)</label>
+        <input data-i="${i}" data-k="off_above" type="number" step="0.1" min="0" max="200" value="${(offAbove*100).toFixed(1)}">
+        <small style="color:#888;display:block;margin-top:4px">Set ON below ≤ OFF above. The gap between them is the hysteresis (price has to rise above OFF before the relay switches off, and drop below ON before it switches on again). Set both equal for a simple single-threshold switch.</small>
+      </div>
     `;
     el.appendChild(div);
   });
   // Wire up icon-cell clicks
   document.querySelectorAll('.relay-icon[data-icon-i]').forEach(el => {
     el.addEventListener('click', () => openIconModal(parseInt(el.dataset.iconI)));
+  });
+  // Toggle thresholds visibility when mode changes
+  document.querySelectorAll('select[data-k="mode"]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const i = parseInt(sel.dataset.i);
+      const card = sel.closest('.relay');
+      const t = card.querySelector('.thresholds');
+      if (t) t.style.display = (parseInt(sel.value) === 2) ? 'block' : 'none';
+    });
   });
 }
 
@@ -405,7 +422,13 @@ async function saveRelays() {
   inputs.forEach(inp => {
     const i = inp.dataset.i, k = inp.dataset.k;
     if (!data[i]) data[i] = {};
-    data[i][k] = k === 'threshold' ? (parseFloat(inp.value)/100.0) : (k === 'mode' ? parseInt(inp.value) : inp.value);
+    if (k === 'on_below' || k === 'off_above') {
+      data[i][k] = parseFloat(inp.value) / 100.0;   // c/kWh -> EUR/kWh
+    } else if (k === 'mode') {
+      data[i][k] = parseInt(inp.value);
+    } else {
+      data[i][k] = inp.value;
+    }
   });
   // Carry along the current icon — the icon picker writes it asynchronously
   // but the user might also "Save relays" before it round-trips.
@@ -459,11 +482,16 @@ String WebUI::buildStateJson() {
     for (int i = 0; i < NUM_RELAYS; ++i) {
         const RelayRule& r = _relays.rule(i);
         JsonObject o = rs.add<JsonObject>();
-        o["name"] = r.name;
-        o["mode"] = (int)r.mode;
-        o["threshold"] = r.threshold;
-        o["state"] = r.state;
-        o["icon"] = (int)r.icon;
+        o["name"]      = r.name;
+        o["mode"]      = (int)r.mode;
+        o["on_below"]  = r.on_below;
+        o["off_above"] = r.off_above;
+        // Backwards-compatible field for any older clients still reading
+        // the single "threshold" key. Reflects on_below since that's the
+        // "main" cut-in value.
+        o["threshold"] = r.on_below;
+        o["state"]     = r.state;
+        o["icon"]      = (int)r.icon;
     }
 
     // Provide the icon catalog so the web UI can render a picker.
@@ -579,8 +607,26 @@ void WebUI::begin() {
                     strncpy(r.name, nm, sizeof(r.name) - 1);
                     r.name[sizeof(r.name) - 1] = 0;
                 }
-                if (o["mode"].is<int>()) r.mode = (RelayMode)(int)o["mode"];
-                if (o["threshold"].is<float>()) r.threshold = o["threshold"];
+                if (o["mode"].is<int>()) {
+                    int m = o["mode"];
+                    // Migrate legacy modes (2 = ON_BELOW, 3 = OFF_ABOVE)
+                    // to the new RMODE_AUTO.
+                    if (m == 2 || m == 3) m = (int)RMODE_AUTO;
+                    if (m < 0 || m > (int)RMODE_AUTO) m = (int)RMODE_ALWAYS_OFF;
+                    r.mode = (RelayMode)m;
+                }
+                // Accept the new field names; fall back to legacy "threshold"
+                // when older clients post that single field instead.
+                if (o["on_below"].is<float>()) {
+                    r.on_below = o["on_below"];
+                } else if (o["threshold"].is<float>()) {
+                    r.on_below = o["threshold"];
+                }
+                if (o["off_above"].is<float>()) {
+                    r.off_above = o["off_above"];
+                } else if (o["threshold"].is<float>()) {
+                    r.off_above = o["threshold"];
+                }
                 if (o["icon"].is<int>()) {
                     int ic = o["icon"];
                     if (ic >= 0 && ic < ICON_COUNT) r.icon = (uint8_t)ic;

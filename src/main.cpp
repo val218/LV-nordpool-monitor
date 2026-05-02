@@ -295,7 +295,11 @@ void loop() {
         s_lastRelayEval = now;
     }
 
-    if (now - s_lastUiRefresh > 1000) {
+    // 250 ms cadence keeps the chart "now" indicator gliding smoothly
+    // across the chart and the clock/status indicators promptly accurate
+    // without hammering the CPU. Each refresh call is cheap — most widgets
+    // only re-render when their content actually changes.
+    if (now - s_lastUiRefresh > 250) {
         g_ui.refresh();
         s_lastUiRefresh = now;
     }

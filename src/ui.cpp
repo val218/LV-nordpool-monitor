@@ -201,37 +201,32 @@ void UI::buildMain() {
 
     // ---- Chart ----
     int chY = 108, chH = 100;
-    lv_obj_t* chartCard = makeCard(_scrMain, 4, chY, DISP_W - 8, chH);
+    _chartCard = makeCard(_scrMain, 4, chY, DISP_W - 8, chH);
 
-    _chart = lv_chart_create(chartCard);
+    _chart = lv_chart_create(_chartCard);
     lv_obj_set_size(_chart, DISP_W - 16, chH - 8);
     lv_obj_align(_chart, LV_ALIGN_CENTER, 0, 0);
     // Line chart, not bars — looks like the e-cena reference and lets
     // us color individual segments by price tier via a draw callback.
     lv_chart_set_type(_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(_chart, 48);
-    // Disable LVGL's built-in division lines — at default theme styling
-    // they render as faint translucent gray bands across the chart area
-    // (the "gray fuzz" effect). We draw our own clean 6-hour vertical
-    // grid lines in onChartDrawPart instead, hooked to LV_PART_MAIN.
+    // Disable LVGL's built-in division lines (the faint gray "fuzz") AND
+    // its built-in axis tick rendering. We draw our own crisp 6-hour
+    // vertical lines in onChartDrawGrid and we lay out our own time
+    // labels as ordinary lv_label children of the chart card — that way
+    // both lines and labels share the same X math and align perfectly.
     lv_chart_set_div_line_count(_chart, 0, 0);
+    lv_chart_set_axis_tick(_chart, LV_CHART_AXIS_PRIMARY_X, 0, 0, 0, 0, false, 0);
     lv_obj_set_style_bg_opa(_chart, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_chart, 0, 0);
     lv_obj_set_style_pad_all(_chart, 0, 0);
-    // Reserve some space at the bottom for the X-axis hour labels we draw
-    // below. Label text is supplied via LV_EVENT_DRAW_PART_BEGIN with the
-    // LV_CHART_DRAW_PART_TICK_LABEL hint.
+    // Reserve room at the bottom for our hour labels (height ~12 px + 2 px gap).
     lv_obj_set_style_pad_bottom(_chart, 14, LV_PART_MAIN);
-    lv_chart_set_axis_tick(_chart, LV_CHART_AXIS_PRIMARY_X,
-                           4, 2, 9, 5, true, 16);
-    lv_obj_set_style_text_font(_chart, FONT_12, LV_PART_TICKS);
-    lv_obj_set_style_text_color(_chart, COL_DIM, LV_PART_TICKS);
     lv_obj_set_style_size(_chart, 0, LV_PART_INDICATOR);  // hide point dots
     lv_obj_set_style_line_width(_chart, 2, LV_PART_ITEMS);
     _chartSeries = lv_chart_add_series(_chart, COL_GREEN, LV_CHART_AXIS_PRIMARY_Y);
 
     // Per-segment color (green→yellow→orange→red by price tier).
-    // The same callback also supplies hour text for X-axis tick labels.
     lv_obj_add_event_cb(_chart, onChartDrawPart,
                         LV_EVENT_DRAW_PART_BEGIN, this);
     // Custom 6-hour vertical grid lines, drawn AFTER everything else so
@@ -243,9 +238,36 @@ void UI::buildMain() {
     lv_obj_add_flag(_chart, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_chart, onChartTouched, LV_EVENT_CLICKED, this);
 
-    _chartUnits = makeLabel(chartCard, unitsLabel().c_str(),
+    _chartUnits = makeLabel(_chartCard, unitsLabel().c_str(),
                             COL_DIM, FONT_12);
     lv_obj_align(_chartUnits, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    // Hour labels under the 6-hour grid lines. We pre-create 8 of them and
+    // position them later (in refreshChartOverlays) using the SAME math the
+    // grid lines use, so they stay perfectly aligned. Hours shown:
+    //   06, 12, 18, 00, 06, 12, 18, 00  (the last "00" sits at hour 48
+    //   which is the right edge of the chart and is clipped/skipped).
+    static const char* kHourLabels[8] = { "06","12","18","00","06","12","18","00" };
+    for (int i = 0; i < 8; ++i) {
+        _chartHourLbls[i] = makeLabel(_chartCard, kHourLabels[i],
+                                       COL_DIM, FONT_12);
+        // Provisional position; refreshChartOverlays() places them properly.
+        lv_obj_set_pos(_chartHourLbls[i], 0, chH - 14);
+    }
+
+    // "Now" indicator — a 2-pixel-wide vertical line in COL_NOWBAR (light
+    // blue) drawn on top of the chart card. Updated each refresh.
+    _chartNowMarker = lv_obj_create(_chartCard);
+    lv_obj_set_size(_chartNowMarker, 2, chH - 18);
+    lv_obj_set_style_bg_color(_chartNowMarker, COL_NOWBAR, 0);
+    lv_obj_set_style_bg_opa(_chartNowMarker, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_chartNowMarker, 0, 0);
+    lv_obj_set_style_radius(_chartNowMarker, 0, 0);
+    lv_obj_set_style_pad_all(_chartNowMarker, 0, 0);
+    lv_obj_clear_flag(_chartNowMarker, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(_chartNowMarker, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(_chartNowMarker, 0, 4);
+    lv_obj_add_flag(_chartNowMarker, LV_OBJ_FLAG_HIDDEN);    // shown once we have data
 
     // ---- Footer stats (4 mini cards) ----
     int ftY = 212, ftH = 56;
@@ -329,6 +351,34 @@ void UI::buildRelays() {
 
 // ---------- EDIT SCREEN ----------------------------------------------
 
+// ===================================================================
+// EDIT SCREEN
+// ===================================================================
+//
+// Layout (480 x 272 panel):
+//
+//   +-------------------------------------------------------+ y=0
+//   | Relay N name                            [icon] [Back] |  header (32 px tall)
+//   +-------------------------------------------------------+ y=36
+//   |  [Always OFF]   [Always ON]      [Auto]               |  3 mode buttons (40 px tall)
+//   +-------------------------------------------------------+ y=80
+//   |  ON below                                             |  ON-BELOW row (44 px)
+//   |  [ - ]    NN.N c/kWh                       [ + ]      |
+//   +-------------------------------------------------------+ y=130
+//   |  OFF above                                            |  OFF-ABOVE row (44 px)
+//   |  [ - ]    NN.N c/kWh                       [ + ]      |
+//   +-------------------------------------------------------+ y=180
+//   |  Hysteresis: 2.0 c/kWh                                |  hint (only visible in AUTO mode)
+//   +-------------------------------------------------------+ y=272
+//
+// In ALWAYS_OFF / ALWAYS_ON modes the two threshold rows and the
+// hysteresis hint are hidden so the screen stays uncluttered.
+//
+// Each spinner button carries a small integer in its user_data:
+//   0 = adjust on_below
+//   1 = adjust off_above
+// onMinus/onPlusTouched read this tag to dispatch.
+
 void UI::buildEdit() {
     _scrEdit = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scrEdit, COL_BG, 0);
@@ -354,47 +404,85 @@ void UI::buildEdit() {
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(back, onBackToRelaysTouched, LV_EVENT_CLICKED, this);
 
-    // 4 mode buttons across the top
-    const char* labels[4] = { T(S_ALWAYS_OFF), T(S_ALWAYS_ON),
-                              T(S_TURN_ON_BELOW), T(S_TURN_OFF_ABOVE) };
-    int btnY = 36, btnH = 56;
+    // ---- 3 mode buttons across the top ----
+    const char* labels[3] = { T(S_ALWAYS_OFF), T(S_ALWAYS_ON), T(S_AUTO) };
+    int btnY = 36, btnH = 40;
     int gap = 6;
-    int btnW = (DISP_W - 5 * gap) / 4;
-    for (int m = 0; m < 4; ++m) {
+    int btnW = (DISP_W - 4 * gap) / 3;
+    for (int m = 0; m < 3; ++m) {
         int bx = gap + m * (btnW + gap);
         lv_obj_t* b = makeCard(_scrEdit, bx, btnY, btnW, btnH);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_user_data(b, (void*)(intptr_t)m);
         lv_obj_add_event_cb(b, onModeBtnTouched, LV_EVENT_CLICKED, this);
-        lv_obj_t* l = makeLabel(b, labels[m], COL_TEXT, FONT_12);
+        lv_obj_t* l = makeLabel(b, labels[m], COL_TEXT, FONT_14);
         lv_obj_center(l);
         _modeBtns[m] = b;
     }
 
-    // Threshold spinner row at the bottom: [-]  value  [+]
-    int valY = 100, valH = 80;
-    int spinW = 70;
+    // ---- Helper to build one spinner row ----
+    // Each row is a transparent container whose visibility we toggle in
+    // refreshEdit() depending on the active mode.
+    auto buildSpinnerRow = [&](lv_obj_t** rowOut, lv_obj_t** valLblOut,
+                               int y, int tag,
+                               const char* caption, lv_color_t accent) {
+        lv_obj_t* row = lv_obj_create(_scrEdit);
+        lv_obj_set_pos(row, 0, y);
+        lv_obj_set_size(row, DISP_W, 50);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        *rowOut = row;
 
-    lv_obj_t* minus = makeCard(_scrEdit, 6, valY, spinW, valH);
-    lv_obj_add_flag(minus, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(minus, onMinusTouched, LV_EVENT_CLICKED, this);
-    lv_obj_t* mlbl = makeLabel(minus, "-", COL_TEXT, FONT_48);
-    lv_obj_center(mlbl);
+        // Caption label, positioned top-left within the row, accent color.
+        lv_obj_t* cap = makeLabel(row, caption, accent, FONT_14);
+        lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 8, 0);
 
-    lv_obj_t* plus = makeCard(_scrEdit, DISP_W - 6 - spinW, valY, spinW, valH);
-    lv_obj_add_flag(plus, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(plus, onPlusTouched, LV_EVENT_CLICKED, this);
-    lv_obj_t* plbl = makeLabel(plus, "+", COL_TEXT, FONT_48);
-    lv_obj_center(plbl);
+        // [-] button on the left, shifted down a bit so it sits under the caption.
+        int spinW = 56, spinH = 36;
+        int spinY = 14;
+        lv_obj_t* minus = makeCard(row, 8, spinY, spinW, spinH);
+        lv_obj_set_style_radius(minus, 6, 0);
+        lv_obj_set_style_border_width(minus, 1, 0);
+        lv_obj_set_style_border_color(minus, accent, 0);
+        lv_obj_add_flag(minus, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(minus, (void*)(intptr_t)tag);
+        lv_obj_add_event_cb(minus, onMinusTouched, LV_EVENT_CLICKED, this);
+        lv_obj_t* mlbl = makeLabel(minus, "-", COL_TEXT, FONT_28);
+        lv_obj_center(mlbl);
 
-    lv_obj_t* valCard = makeCard(_scrEdit, 6 + spinW + 6, valY,
-                                  DISP_W - 2 * (6 + spinW + 6), valH);
-    _editValueLabel = makeLabel(valCard, "--", COL_TEXT, FONT_28);
-    lv_obj_center(_editValueLabel);
+        // [+] button on the right.
+        lv_obj_t* plus = makeCard(row, DISP_W - 8 - spinW, spinY, spinW, spinH);
+        lv_obj_set_style_radius(plus, 6, 0);
+        lv_obj_set_style_border_width(plus, 1, 0);
+        lv_obj_set_style_border_color(plus, accent, 0);
+        lv_obj_add_flag(plus, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(plus, (void*)(intptr_t)tag);
+        lv_obj_add_event_cb(plus, onPlusTouched, LV_EVENT_CLICKED, this);
+        lv_obj_t* plbl = makeLabel(plus, "+", COL_TEXT, FONT_28);
+        lv_obj_center(plbl);
 
-    lv_obj_t* tlbl = makeLabel(_scrEdit, T(S_THRESHOLD),
-                                COL_DIM, FONT_12);
-    lv_obj_align(tlbl, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+        // Value card filling the middle — same height as the buttons.
+        int valX = 8 + spinW + 8;
+        int valW = DISP_W - 2 * (8 + spinW + 8);
+        lv_obj_t* valCard = makeCard(row, valX, spinY, valW, spinH);
+        *valLblOut = makeLabel(valCard, "-- c/kWh", COL_TEXT, FONT_24);
+        lv_obj_center(*valLblOut);
+    };
+
+    // Row 1: ON below (green accent — the "turn it on" condition)
+    buildSpinnerRow(&_editOnBelowRow, &_editOnBelowVal,
+                    78, 0, T(S_TURN_ON_BELOW), COL_GREEN);
+
+    // Row 2: OFF above (red accent — the "turn it off" condition)
+    buildSpinnerRow(&_editOffAboveRow, &_editOffAboveVal,
+                    132, 1, T(S_TURN_OFF_ABOVE), COL_RED);
+
+    // Hysteresis hint at the bottom — visible only when both thresholds
+    // exist AND they differ.
+    _editHysteresisLbl = makeLabel(_scrEdit, "", COL_DIM, FONT_12);
+    lv_obj_align(_editHysteresisLbl, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 }
 
 // ---- Refresh (called periodically) ----------------------------------
@@ -405,6 +493,10 @@ void UI::refresh() {
     if (lv_scr_act() == _scrMain) {
         refreshPriceCards();
         refreshChart();
+        // refreshChartOverlays is also called inside refreshChart(), but
+        // calling it here too means the "now" line keeps moving even on
+        // ticks where refreshChart() itself early-outs (e.g. no new data).
+        refreshChartOverlays();
         refreshStats();
     } else if (lv_scr_act() == _scrRelays) {
         refreshRelayTiles();
@@ -442,13 +534,17 @@ void UI::redraw() {
     _cardPrev = _cardCur = _cardNext = nullptr;
     _lblPrev = _lblCur = _lblNext = nullptr;
     _chart = nullptr; _chartSeries = nullptr;
+    _chartCard = nullptr;
     _chartUnits = _chartNowMarker = _chartAvgLine = nullptr;
+    for (int i = 0; i < 8; ++i) _chartHourLbls[i] = nullptr;
     _chartFirstIdx = _chartLastIdx = _chartNowIdx = -1;
     _statAvg = _statMin = _statMax = _statUpd = nullptr;
     for (int i = 0; i < NUM_RELAYS; ++i) _tiles[i] = {};
     _editTitle = _editIconBtn = _editIconLabel = nullptr;
-    for (int i = 0; i < 4; ++i) _modeBtns[i] = nullptr;
-    _editValueLabel = nullptr;
+    for (int i = 0; i < 3; ++i) _modeBtns[i] = nullptr;
+    _editOnBelowVal = _editOffAboveVal = nullptr;
+    _editOnBelowRow = _editOffAboveRow = nullptr;
+    _editHysteresisLbl = nullptr;
     _iconGrid = nullptr;
     _fullChart = nullptr; _fullChartSeries = nullptr;
     _fullAvgLine = _fullChartTitle = _fullChartTip = nullptr;
@@ -578,6 +674,108 @@ void UI::refreshChart() {
     }
 
     lv_label_set_text(_chartUnits, unitsLabel().c_str());
+
+    // Re-position the now-line and hour labels too. They live on top of
+    // the chart card, but their X positions depend on the chart's plot
+    // dimensions which we just (potentially) changed.
+    refreshChartOverlays();
+}
+
+// Position the chart's overlay widgets (the light-blue "now" line and
+// the eight 6-hour time labels) in sync with the chart's plot area.
+//
+// IMPORTANT: the math here MUST match the math in onChartDrawGrid (and
+// drawSixHourGrid) so the labels sit directly under the grid lines. See
+// the math comment on drawSixHourGrid for the derivation.
+//
+// Cheap to call — at most 9 lv_obj_set_pos() calls per invocation.
+void UI::refreshChartOverlays() {
+    if (!_chart || !_chartCard) return;
+
+    // We need the chart's PLOT area (chart bbox minus padding) expressed
+    // in coordinates relative to its parent (the chart card), because
+    // that's the coordinate space the overlay widgets live in.
+    lv_obj_update_layout(_chart);
+    lv_coord_t cx = lv_obj_get_x(_chart);
+    lv_coord_t cy = lv_obj_get_y(_chart);
+    lv_coord_t cw = lv_obj_get_width(_chart);
+    lv_coord_t ch = lv_obj_get_height(_chart);
+    lv_coord_t padL = lv_obj_get_style_pad_left  (_chart, LV_PART_MAIN);
+    lv_coord_t padR = lv_obj_get_style_pad_right (_chart, LV_PART_MAIN);
+    lv_coord_t padT = lv_obj_get_style_pad_top   (_chart, LV_PART_MAIN);
+    lv_coord_t padB = lv_obj_get_style_pad_bottom(_chart, LV_PART_MAIN);
+
+    lv_coord_t plotX = cx + padL;
+    lv_coord_t plotY = cy + padT;
+    lv_coord_t plotW = cw - padL - padR;
+    lv_coord_t plotH = ch - padT - padB;
+    if (plotW <= 0 || plotH <= 0) return;
+
+    // The chart represents 48 hours (point 0..47 spanning the full plotW).
+    // For point i: x = plotX + i * plotW / 47.
+    static const int kHours[8] = { 6, 12, 18, 24, 30, 36, 42, 48 };
+
+    // Position the 8 hour labels. The first 7 sit AT the corresponding
+    // grid line; the 8th (hour 48) is at the far right edge and we
+    // simply hide it because there's no room and the value duplicates
+    // the leftmost "00" anyway. The labels are children of _chartCard,
+    // so positions are in chart-card coordinates.
+    for (int i = 0; i < 8; ++i) {
+        lv_obj_t* lbl = _chartHourLbls[i];
+        if (!lbl) continue;
+        if (i == 7) {
+            lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        // Place the label centered horizontally on the grid line.
+        // We need the label's measured width to center it properly.
+        lv_obj_update_layout(lbl);
+        lv_coord_t lblW = lv_obj_get_width(lbl);
+        int h = kHours[i];
+        lv_coord_t x = plotX + (lv_coord_t)((int32_t)plotW * h / 47);
+        // Y position: just below the plot area, inside the chart's
+        // pad_bottom region. plotY+plotH = bottom of plot; the chart's
+        // pad_bottom (14 px) is what we reserved for these labels.
+        lv_coord_t y = plotY + plotH + 1;
+        lv_obj_set_pos(lbl, x - lblW / 2, y);
+    }
+
+    // Position the "now" indicator. We want fractional precision — the
+    // line should glide smoothly between hour ticks, not jump every hour.
+    if (_chartNowMarker) {
+        time_t now = time(nullptr);
+        // Need the same anchor as refreshChart() — start of "today" in
+        // local time. The chart spans [todayStart, todayStart + 48h).
+        struct tm tnow; localtime_r(&now, &tnow);
+        tnow.tm_hour = 0; tnow.tm_min = 0; tnow.tm_sec = 0;
+        time_t todayStart = mktime(&tnow);
+
+        long offsetSec = (long)(now - todayStart);
+        const long windowSec = 48L * 3600L;
+
+        if (now < 100000 || offsetSec < 0 || offsetSec >= windowSec ||
+            _chartFirstIdx < 0) {
+            // No valid time, or we're outside the visible window.
+            lv_obj_add_flag(_chartNowMarker, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            // Map offsetSec onto the 0..47 point range (point i covers
+            // hours [i, i+1)). At offsetSec = 0 we sit on point 0; at
+            // offsetSec = 47*3600 (i.e. start of hour 47) we sit on
+            // point 47 — but we have a fractional point index for
+            // smooth motion.
+            float fIdx = (float)offsetSec / 3600.0f;
+            if (fIdx < 0) fIdx = 0;
+            if (fIdx > 47.0f) fIdx = 47.0f;
+            lv_coord_t x = plotX + (lv_coord_t)(plotW * fIdx / 47.0f);
+            // Center the 2px line on the computed x.
+            lv_obj_set_pos(_chartNowMarker, x - 1, plotY);
+            lv_obj_set_size(_chartNowMarker, 2, plotH);
+            lv_obj_clear_flag(_chartNowMarker, LV_OBJ_FLAG_HIDDEN);
+            // Make sure the now-line draws ON TOP of the chart and labels.
+            lv_obj_move_foreground(_chartNowMarker);
+        }
+    }
 }
 
 void UI::refreshStats() {
@@ -624,13 +822,20 @@ void UI::refreshRelayTiles() {
         switch (rr.mode) {
             case RMODE_ALWAYS_OFF: m = T(S_ALWAYS_OFF); break;
             case RMODE_ALWAYS_ON:  m = T(S_ALWAYS_ON);  break;
-            case RMODE_ON_BELOW:   m = T(S_TURN_ON_BELOW); break;
-            case RMODE_OFF_ABOVE:  m = T(S_TURN_OFF_ABOVE); break;
+            case RMODE_AUTO:       m = T(S_AUTO);       break;
         }
         lv_label_set_text(tt.mode, m);
 
-        if (rr.mode == RMODE_ON_BELOW || rr.mode == RMODE_OFF_ABOVE) {
-            char b[16]; snprintf(b, sizeof(b), "%.1f c", rr.threshold * 100.0f);
+        if (rr.mode == RMODE_AUTO) {
+            char b[24];
+            // If both thresholds are equal, show one number to keep the
+            // tile uncluttered. Otherwise show "ON / OFF" pair.
+            if (fabsf(rr.on_below - rr.off_above) < 0.0001f) {
+                snprintf(b, sizeof(b), "%.1f c", rr.on_below * 100.0f);
+            } else {
+                snprintf(b, sizeof(b), "%.1f / %.1f",
+                         rr.on_below * 100.0f, rr.off_above * 100.0f);
+            }
             lv_label_set_text(tt.threshold, b);
         } else {
             lv_label_set_text(tt.threshold, "");
@@ -651,15 +856,56 @@ void UI::refreshEdit() {
     snprintf(title, sizeof(title), "%s %d  %s", T(S_RELAY), _editIdx + 1, rr.name);
     lv_label_set_text(_editTitle, title);
 
-    for (int m = 0; m < 4; ++m) {
+    // Highlight the active mode button.
+    for (int m = 0; m < 3; ++m) {
         bool active = (int)rr.mode == m;
         lv_obj_set_style_bg_color(_modeBtns[m],
             active ? COL_NOWBAR : COL_CARD, 0);
     }
 
-    char vb[32];
-    snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.threshold * 100.0f);
-    lv_label_set_text(_editValueLabel, vb);
+    // Threshold rows are visible only in AUTO mode.
+    bool autoMode = (rr.mode == RMODE_AUTO);
+    if (_editOnBelowRow) {
+        if (autoMode) lv_obj_clear_flag(_editOnBelowRow,  LV_OBJ_FLAG_HIDDEN);
+        else          lv_obj_add_flag  (_editOnBelowRow,  LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_editOffAboveRow) {
+        if (autoMode) lv_obj_clear_flag(_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
+        else          lv_obj_add_flag  (_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (autoMode) {
+        char vb[32];
+        snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.on_below  * 100.0f);
+        lv_label_set_text(_editOnBelowVal,  vb);
+        snprintf(vb, sizeof(vb), "%.1f c/kWh", rr.off_above * 100.0f);
+        lv_label_set_text(_editOffAboveVal, vb);
+    }
+
+    // Hysteresis hint at the bottom: visible only in AUTO mode.
+    if (_editHysteresisLbl) {
+        if (autoMode) {
+            float gap = rr.off_above - rr.on_below;
+            char hb[64];
+            if (gap > 0.0001f) {
+                snprintf(hb, sizeof(hb), "%s: %.1f c/kWh",
+                         T(S_HYSTERESIS), gap * 100.0f);
+                lv_obj_set_style_text_color(_editHysteresisLbl, COL_DIM, 0);
+            } else if (gap < -0.0001f) {
+                // ON-below higher than OFF-above is invalid (the relay
+                // would oscillate or never turn off). Warn in red.
+                snprintf(hb, sizeof(hb), "! ON > OFF (%.1f c)", -gap * 100.0f);
+                lv_obj_set_style_text_color(_editHysteresisLbl, COL_RED, 0);
+            } else {
+                snprintf(hb, sizeof(hb), "%s: 0 c/kWh", T(S_HYSTERESIS));
+                lv_obj_set_style_text_color(_editHysteresisLbl, COL_DIM, 0);
+            }
+            lv_label_set_text(_editHysteresisLbl, hb);
+            lv_obj_clear_flag(_editHysteresisLbl, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(_editHysteresisLbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     if (_editIconLabel) {
         lv_label_set_text(_editIconLabel, iconText((RelayIcon)rr.icon));
@@ -720,12 +966,21 @@ void UI::onModeBtnTouched(lv_event_t* e) {
     }
 }
 
+// Spinner buttons carry an integer tag in user_data:
+//   0 = adjust on_below, 1 = adjust off_above
+// We walk one step (0.5 c/kWh = 0.005 EUR/kWh) per tap and clamp to a
+// sensible range. The two thresholds are *not* coupled — the user can
+// freely set on_below > off_above; refreshEdit() flags this visually so
+// they can correct it if it was unintentional.
 void UI::onMinusTouched(lv_event_t* e) {
     UI* self = (UI*)lv_event_get_user_data(e);
     if (self->_editIdx < 0 || self->_editIdx >= NUM_RELAYS) return;
+    lv_obj_t* btn = lv_event_get_current_target(e);
+    int tag = (int)(intptr_t)lv_obj_get_user_data(btn);
     RelayRule& rr = self->_relays.rule(self->_editIdx);
-    rr.threshold -= 0.005f;
-    if (rr.threshold < 0) rr.threshold = 0;
+    float* p = (tag == 1) ? &rr.off_above : &rr.on_below;
+    *p -= 0.005f;
+    if (*p < 0) *p = 0;
     self->_relays.save();
     self->refreshEdit();
 }
@@ -733,9 +988,12 @@ void UI::onMinusTouched(lv_event_t* e) {
 void UI::onPlusTouched(lv_event_t* e) {
     UI* self = (UI*)lv_event_get_user_data(e);
     if (self->_editIdx < 0 || self->_editIdx >= NUM_RELAYS) return;
+    lv_obj_t* btn = lv_event_get_current_target(e);
+    int tag = (int)(intptr_t)lv_obj_get_user_data(btn);
     RelayRule& rr = self->_relays.rule(self->_editIdx);
-    rr.threshold += 0.005f;
-    if (rr.threshold > 2.0f) rr.threshold = 2.0f;
+    float* p = (tag == 1) ? &rr.off_above : &rr.on_below;
+    *p += 0.005f;
+    if (*p > 2.0f) *p = 2.0f;
     self->_relays.save();
     self->refreshEdit();
 }
