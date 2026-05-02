@@ -52,13 +52,24 @@ jobs:
       - name: Generate fonts
         run: |
           set -e
-          if [ ! -f src/fonts/np_font_14.c ]; then
+          NEEDED="np_font_12.c np_font_14.c np_font_16.c np_font_20.c np_font_24.c np_font_28.c np_font_40.c np_font_48.c"
+          REGEN=0
+          for f in $NEEDED; do
+            if [ ! -s "src/fonts/$f" ]; then
+              echo "Missing or empty: src/fonts/$f"
+              REGEN=1
+            fi
+          done
+          if [ "$REGEN" = "1" ]; then
             echo "Generating font C files..."
             bash tools/build_fonts.sh
           else
-            echo "Cached font files present, skipping regeneration."
+            echo "All font files present, skipping regeneration."
           fi
+          echo "---- src/fonts/ contents ----"
           ls -la src/fonts/
+          echo "---- file sizes ----"
+          wc -l src/fonts/np_font_*.c | tail -10
 
       - name: Sanity-check project files
         run: |
