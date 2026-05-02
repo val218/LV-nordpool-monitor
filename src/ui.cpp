@@ -138,6 +138,10 @@ void UI::buildMain() {
     // ---- Header ----
     _hdrTitle  = makeLabel(_scrMain, T(S_TITLE), COL_TEXT, FONT_14);
     lv_obj_align(_hdrTitle, LV_ALIGN_TOP_LEFT, 6, 6);
+    // Force a layout pass so we can read the actual rendered width of the
+    // title below. Without this, lv_obj_get_width() returns 0 because the
+    // label hasn't been measured yet.
+    lv_obj_update_layout(_hdrTitle);
 
     _hdrStatus = lv_obj_create(_scrMain);
     lv_obj_set_size(_hdrStatus, 8, 8);
@@ -145,11 +149,16 @@ void UI::buildMain() {
     lv_obj_set_style_bg_color(_hdrStatus, COL_RED, 0);
     lv_obj_set_style_bg_opa(_hdrStatus, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_hdrStatus, 0, 0);
-    lv_obj_align(_hdrStatus, LV_ALIGN_TOP_LEFT, 130, 12);
+    // Anchor the status dot to the right edge of the title with a small gap.
+    // Previously it was at a fixed x=130 which overlapped "Nordpool Monitor"
+    // at FONT_14 (~155 px wide). Anchoring to the title makes the layout
+    // robust to translation length differences.
+    lv_obj_align_to(_hdrStatus, _hdrTitle, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
     lv_obj_clear_flag(_hdrStatus, LV_OBJ_FLAG_SCROLLABLE);
 
     _hdrIp = makeLabel(_scrMain, "", COL_DIM, FONT_12);
-    lv_obj_align(_hdrIp, LV_ALIGN_TOP_LEFT, 144, 9);
+    // IP label sits to the right of the status dot.
+    lv_obj_align_to(_hdrIp, _hdrStatus, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 
     _hdrClock = makeLabel(_scrMain, "--:--", COL_TEXT, FONT_14);
     lv_obj_align(_hdrClock, LV_ALIGN_TOP_RIGHT, -6, 6);
@@ -201,7 +210,11 @@ void UI::buildMain() {
     // us color individual segments by price tier via a draw callback.
     lv_chart_set_type(_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(_chart, 48);
-    lv_chart_set_div_line_count(_chart, 3, 6);
+    // Disable LVGL's built-in division lines — at default theme styling
+    // they render as faint translucent gray bands across the chart area
+    // (the "gray fuzz" effect). We draw our own clean 6-hour vertical
+    // grid lines in onChartDrawPart instead, hooked to LV_PART_MAIN.
+    lv_chart_set_div_line_count(_chart, 0, 0);
     lv_obj_set_style_bg_opa(_chart, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_chart, 0, 0);
     lv_obj_set_style_pad_all(_chart, 0, 0);
@@ -221,6 +234,10 @@ void UI::buildMain() {
     // The same callback also supplies hour text for X-axis tick labels.
     lv_obj_add_event_cb(_chart, onChartDrawPart,
                         LV_EVENT_DRAW_PART_BEGIN, this);
+    // Custom 6-hour vertical grid lines, drawn AFTER everything else so
+    // they sit on top of the plot area (similar to the web UI).
+    lv_obj_add_event_cb(_chart, onChartDrawGrid,
+                        LV_EVENT_DRAW_POST_END, this);
     // Tap chart → fullscreen view. The chart absorbs taps so its parent
     // card needs to be the actual click target.
     lv_obj_add_flag(_chart, LV_OBJ_FLAG_CLICKABLE);
@@ -808,7 +825,9 @@ void UI::buildFullChart() {
     lv_obj_set_pos(_fullChart, chX, chY);
     lv_obj_set_size(_fullChart, chW, chH);
     lv_chart_set_type(_fullChart, LV_CHART_TYPE_LINE);
-    lv_chart_set_div_line_count(_fullChart, 4, 6);
+    // No built-in division lines — we draw our own crisp 6-hour grid in
+    // onFullChartDrawGrid below.
+    lv_chart_set_div_line_count(_fullChart, 0, 0);
     lv_obj_set_style_bg_opa(_fullChart, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(_fullChart, COL_CARD, 0);
     lv_obj_set_style_border_width(_fullChart, 0, 0);
@@ -828,6 +847,9 @@ void UI::buildFullChart() {
     // Wire per-segment color callback and tap-to-inspect.
     lv_obj_add_event_cb(_fullChart, onFullChartDrawPart,
                         LV_EVENT_DRAW_PART_BEGIN, this);
+    // 6-hour vertical grid lines on top of the plot area.
+    lv_obj_add_event_cb(_fullChart, onFullChartDrawGrid,
+                        LV_EVENT_DRAW_POST_END, this);
     lv_obj_add_flag(_fullChart, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_fullChart, onFullChartTouched,
                         LV_EVENT_PRESSED, this);
@@ -986,6 +1008,73 @@ void UI::onFullChartDrawPart(lv_event_t* e) {
     float p = self->_prices.at(absIdx).price_raw;
     lv_color_t c = self->colorForPrice(p, self->_fullMin, self->_fullMax);
     if (dsc->line_dsc) dsc->line_dsc->color = c;
+}
+
+// ===================================================================
+// CUSTOM 6-HOUR GRID LINES
+// ===================================================================
+//
+// We don't use LVGL's built-in lv_chart_set_div_line_count because at
+// the default theme styling those lines render as faint translucent
+// gray (the "fuzz" reported on the LCD) and they don't align with our
+// 6-hour tick labels. Instead, we hook LV_EVENT_DRAW_POST_END which
+// fires after the chart has finished drawing all its parts, and we
+// draw vertical lines on top of the plot area at the same X positions
+// LVGL uses for the major ticks.
+//
+// Plot-area math:
+//   The chart has 48 points spanning the full plot width. LVGL puts
+//   point 0 at the left edge of (chart->coords + pad_left) and point N-1
+//   at the right edge minus pad_right. So the X position of point i is
+//       x_i = x1 + i * (plot_w / (N - 1))
+//   We draw lines at i = 6, 12, 18, 24, 30, 36, 42 (skipping 0 and 47
+//   because they sit right on the chart's edges).
+
+static void drawSixHourGrid(lv_event_t* e, int pointCount) {
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_POST_END) return;
+    lv_obj_t* chart = lv_event_get_target(e);
+    if (!chart) return;
+    lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
+    if (!draw_ctx) return;
+
+    // Compute the plot-area rect: chart bounding box, minus padding on
+    // every side (LVGL allocates pad_top/pad_left for the plotting area
+    // and pad_bottom/pad_right for axis ticks/labels).
+    lv_coord_t x1 = chart->coords.x1 + lv_obj_get_style_pad_left  (chart, LV_PART_MAIN);
+    lv_coord_t x2 = chart->coords.x2 - lv_obj_get_style_pad_right (chart, LV_PART_MAIN);
+    lv_coord_t y1 = chart->coords.y1 + lv_obj_get_style_pad_top   (chart, LV_PART_MAIN);
+    lv_coord_t y2 = chart->coords.y2 - lv_obj_get_style_pad_bottom(chart, LV_PART_MAIN);
+    int plotW = x2 - x1;
+    if (plotW <= 0 || pointCount < 2) return;
+
+    // LVGL fits N points across [x1, x2] inclusive on both ends, so each
+    // step is plotW / (N - 1). Hours we want vertical lines at: every 6h,
+    // skipping the chart edges (hour 0 = left edge, hour ~N-1 = right).
+    static const int kHours[] = { 6, 12, 18, 24, 30, 36, 42 };
+    static const int kHoursN = sizeof(kHours) / sizeof(kHours[0]);
+
+    lv_draw_line_dsc_t line_dsc;
+    lv_draw_line_dsc_init(&line_dsc);
+    line_dsc.color = lv_color_hex(0x3A3F4A); // slightly lighter than COL_CARD
+    line_dsc.width = 1;
+    line_dsc.opa   = LV_OPA_60;
+
+    for (int k = 0; k < kHoursN; k++) {
+        int h = kHours[k];
+        if (h >= pointCount) continue;
+        lv_coord_t x = x1 + (lv_coord_t)((int32_t)plotW * h / (pointCount - 1));
+        lv_point_t p1 = { x, y1 };
+        lv_point_t p2 = { x, y2 };
+        lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
+    }
+}
+
+void UI::onChartDrawGrid(lv_event_t* e) {
+    drawSixHourGrid(e, 48);
+}
+
+void UI::onFullChartDrawGrid(lv_event_t* e) {
+    drawSixHourGrid(e, 48);
 }
 
 // ===================================================================

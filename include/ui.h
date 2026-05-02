@@ -138,7 +138,9 @@ private:
     static void onMainTouched(lv_event_t* e);
     static void onChartTouched(lv_event_t* e);          // open fullscreen
     static void onChartDrawPart(lv_event_t* e);         // per-segment color
+    static void onChartDrawGrid(lv_event_t* e);         // 6h vertical grid lines
     static void onFullChartDrawPart(lv_event_t* e);
+    static void onFullChartDrawGrid(lv_event_t* e);     // 6h vertical grid lines (full)
     static void onFullChartTouched(lv_event_t* e);      // tap-to-inspect
     static void onFullChartBack(lv_event_t* e);
     static void onRelayTileTouched(lv_event_t* e);
