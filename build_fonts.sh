@@ -85,18 +85,22 @@ for sz in "${SIZES[@]}"; do
         --lv-include "lvgl.h" \
         -o "$OUT"
 
-    # Validate output: file should be non-empty and contain the symbol name.
+    # Validate output: file should be non-empty AND export the expected symbol.
+    # Looking for the LVGL exported font struct definition:
+    #   const lv_font_t np_font_14 = { ... };
     if [ ! -s "$OUT" ]; then
         echo "[fonts] ERROR: ${OUT} was not created or is empty"
         exit 1
     fi
-    if ! grep -q "${SYM}" "$OUT"; then
-        echo "[fonts] ERROR: ${OUT} does not contain symbol '${SYM}'"
-        echo "        First 20 lines:"
-        head -20 "$OUT"
+    if ! grep -qE "lv_font_t[[:space:]]+${SYM}[[:space:]]*=" "$OUT"; then
+        echo "[fonts] ERROR: ${OUT} does not export 'const lv_font_t ${SYM}'"
+        echo "        Searching for any lv_font_t exports in the file:"
+        grep -nE "lv_font_t[[:space:]]+[a-zA-Z_]+[[:space:]]*=" "$OUT" || echo "        (none found)"
+        echo "        Last 20 lines of file:"
+        tail -20 "$OUT"
         exit 1
     fi
-    echo "[fonts]   OK: $(wc -c < "$OUT") bytes, symbol '${SYM}' found"
+    echo "[fonts]   OK: $(wc -c < "$OUT") bytes, symbol '${SYM}' exported"
 done
 
 echo "[fonts] done — generated ${#SIZES[@]} font files in $OUT_DIR"

@@ -92,6 +92,26 @@ jobs:
       - name: Clean build directory
         run: rm -rf .pio/build
 
+      - name: Verify fonts will be compiled
+        run: |
+          set -e
+          echo "---- Files in src/fonts/ ----"
+          find src/fonts -type f -name "*.c" | sort
+          echo ""
+          echo "---- Symbol declarations check ----"
+          for sz in 12 14 16 20 24 28 40 48; do
+            f="src/fonts/np_font_${sz}.c"
+            if [ ! -s "$f" ]; then
+              echo "MISSING: $f"; exit 1
+            fi
+            if ! grep -qE "lv_font_t[[:space:]]+np_font_${sz}[[:space:]]*=" "$f"; then
+              echo "MISSING SYMBOL in $f"
+              grep -nE "lv_font_t" "$f" | head -3
+              exit 1
+            fi
+            echo "OK: $f exports np_font_${sz}"
+          done
+
       - name: Build firmware
         run: pio run -e LV-nordpool-monitor
 
