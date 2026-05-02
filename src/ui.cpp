@@ -112,7 +112,7 @@ void UI::begin() {
     buildRelays();
     buildEdit();
     buildIconPick();
-    buildFullChart();
+    buildFullTable();
     openMain();
 }
 
@@ -424,28 +424,42 @@ void UI::buildEdit() {
     }
 
     // ---- Helper to build one spinner row ----
-    // Each row is a transparent container whose visibility we toggle in
-    // refreshEdit() depending on the active mode.
-    auto buildSpinnerRow = [&](lv_obj_t** rowOut, lv_obj_t** valLblOut,
+    //
+    // Layout (vertical):
+    //   y+0  : caption "ON below" / "OFF above" (small label, accent color)
+    //   y+18 : [-]  [VALUE]  [+]   spinner controls
+    //
+    // The caption goes DIRECTLY on the edit screen (not inside the row
+    // container) so we avoid any nested-coordinate or z-order surprises.
+    // We track both pointers so refreshEdit() can hide/show them as a
+    // unit; the wrapper row only owns the spinner widgets.
+    struct SpinnerRowPtrs { lv_obj_t* row; lv_obj_t* caption; };
+    auto buildSpinnerRow = [&](SpinnerRowPtrs& out, lv_obj_t** valLblOut,
                                int y, int tag,
                                const char* caption, lv_color_t accent) {
+        const int capH  = 16;
+        const int spinH = 36;
+        const int spinW = 48;
+        const int gap   = 6;
+        const int totalH = capH + spinH;
+
+        // Caption — placed DIRECTLY on the edit screen, above the row.
+        out.caption = makeLabel(_scrEdit, caption, accent, FONT_14);
+        lv_obj_set_pos(out.caption, 12, y);
+
+        // Spinner row — a transparent container we can hide/show as one
+        // unit. Sits below the caption, owns the [-] / value / [+] cards.
         lv_obj_t* row = lv_obj_create(_scrEdit);
-        lv_obj_set_pos(row, 0, y);
-        lv_obj_set_size(row, DISP_W, 50);
+        lv_obj_set_pos(row, 0, y + capH);
+        lv_obj_set_size(row, DISP_W, spinH + 4);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        *rowOut = row;
+        out.row = row;
 
-        // Caption label, positioned top-left within the row, accent color.
-        lv_obj_t* cap = makeLabel(row, caption, accent, FONT_14);
-        lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 8, 0);
-
-        // [-] button on the left, shifted down a bit so it sits under the caption.
-        int spinW = 56, spinH = 36;
-        int spinY = 14;
-        lv_obj_t* minus = makeCard(row, 8, spinY, spinW, spinH);
+        // [-] button on the left.
+        lv_obj_t* minus = makeCard(row, 8, 0, spinW, spinH);
         lv_obj_set_style_radius(minus, 6, 0);
         lv_obj_set_style_border_width(minus, 1, 0);
         lv_obj_set_style_border_color(minus, accent, 0);
@@ -455,8 +469,9 @@ void UI::buildEdit() {
         lv_obj_t* mlbl = makeLabel(minus, "-", COL_TEXT, FONT_28);
         lv_obj_center(mlbl);
 
-        // [+] button on the right.
-        lv_obj_t* plus = makeCard(row, DISP_W - 8 - spinW, spinY, spinW, spinH);
+        // [+] button on the far right.
+        int xPlus = DISP_W - 8 - spinW;
+        lv_obj_t* plus = makeCard(row, xPlus, 0, spinW, spinH);
         lv_obj_set_style_radius(plus, 6, 0);
         lv_obj_set_style_border_width(plus, 1, 0);
         lv_obj_set_style_border_color(plus, accent, 0);
@@ -466,21 +481,30 @@ void UI::buildEdit() {
         lv_obj_t* plbl = makeLabel(plus, "+", COL_TEXT, FONT_28);
         lv_obj_center(plbl);
 
-        // Value card filling the middle — same height as the buttons.
-        int valX = 8 + spinW + 8;
-        int valW = DISP_W - 2 * (8 + spinW + 8);
-        lv_obj_t* valCard = makeCard(row, valX, spinY, valW, spinH);
+        // Value card filling the middle of the row.
+        int valX = 8 + spinW + gap;
+        int valW = xPlus - valX - gap;
+        lv_obj_t* valCard = makeCard(row, valX, 0, valW, spinH);
         *valLblOut = makeLabel(valCard, "-- c/kWh", COL_TEXT, FONT_24);
         lv_obj_center(*valLblOut);
+
+        (void)totalH;   // silence unused (kept for documentation only)
     };
 
-    // Row 1: ON below (green accent — the "turn it on" condition)
-    buildSpinnerRow(&_editOnBelowRow, &_editOnBelowVal,
-                    78, 0, T(S_TURN_ON_BELOW), COL_GREEN);
+    // Row 1: ON below (green accent — the "turn it on" condition).
+    // Mode buttons end at y = 36 + 40 = 76; first row starts at y = 80.
+    // Caption (16) + spinner (36) + 4 px gap below = 56 px per row.
+    SpinnerRowPtrs row1, row2;
+    buildSpinnerRow(row1, &_editOnBelowVal,
+                    80, 0, T(S_TURN_ON_BELOW), COL_GREEN);
+    _editOnBelowRow     = row1.row;
+    _editOnBelowCaption = row1.caption;
 
-    // Row 2: OFF above (red accent — the "turn it off" condition)
-    buildSpinnerRow(&_editOffAboveRow, &_editOffAboveVal,
-                    132, 1, T(S_TURN_OFF_ABOVE), COL_RED);
+    // Row 2: OFF above (red accent — the "turn it off" condition).
+    buildSpinnerRow(row2, &_editOffAboveVal,
+                    140, 1, T(S_TURN_OFF_ABOVE), COL_RED);
+    _editOffAboveRow     = row2.row;
+    _editOffAboveCaption = row2.caption;
 
     // Hysteresis hint at the bottom — visible only when both thresholds
     // exist AND they differ.
@@ -547,12 +571,12 @@ void UI::redraw() {
     for (int i = 0; i < 4; ++i) _modeBtns[i] = nullptr;
     _editOnBelowVal = _editOffAboveVal = nullptr;
     _editOnBelowRow = _editOffAboveRow = nullptr;
+    _editOnBelowCaption = _editOffAboveCaption = nullptr;
     _editHysteresisLbl = nullptr;
     _iconGrid = nullptr;
-    _fullChart = nullptr; _fullChartSeries = nullptr;
-    _fullAvgLine = _fullChartTitle = _fullChartTip = nullptr;
-    _fullYAxis = _fullXAxis = nullptr;
-    _fullFirstIdx = _fullLastIdx = -1;
+    _fullTable = nullptr;
+    _scrFullTitle = nullptr;
+    _fullFirstIdx = _fullLastIdx = _fullNowIdx = -1;
     _lastClock = "";
     _lastNowIdx = -1;
 
@@ -560,7 +584,7 @@ void UI::redraw() {
     buildRelays();
     buildEdit();
     buildIconPick();
-    buildFullChart();
+    buildFullTable();
 
     // Now load the correct screen again
     switch (wasShowing) {
@@ -884,9 +908,17 @@ void UI::refreshEdit() {
         if (showOn) lv_obj_clear_flag(_editOnBelowRow, LV_OBJ_FLAG_HIDDEN);
         else        lv_obj_add_flag  (_editOnBelowRow, LV_OBJ_FLAG_HIDDEN);
     }
+    if (_editOnBelowCaption) {
+        if (showOn) lv_obj_clear_flag(_editOnBelowCaption, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag  (_editOnBelowCaption, LV_OBJ_FLAG_HIDDEN);
+    }
     if (_editOffAboveRow) {
         if (showOff) lv_obj_clear_flag(_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
         else         lv_obj_add_flag  (_editOffAboveRow, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_editOffAboveCaption) {
+        if (showOff) lv_obj_clear_flag(_editOffAboveCaption, LV_OBJ_FLAG_HIDDEN);
+        else         lv_obj_add_flag  (_editOffAboveCaption, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (showOn && _editOnBelowVal) {
@@ -951,7 +983,7 @@ void UI::openMain()             { lv_scr_load(_scrMain); }
 void UI::openRelays()           { lv_scr_load(_scrRelays); }
 void UI::openEdit(int idx)      { _editIdx = idx; lv_scr_load(_scrEdit); }
 void UI::openIconPick()         { lv_scr_load(_scrIconPick); }
-void UI::openFullChart()        { lv_scr_load(_scrFullChart); refreshFullChart(); }
+void UI::openFullTable()        { lv_scr_load(_scrFullChart); refreshFullTable(); }
 
 // ---- Event thunks ---------------------------------------------------
 // LVGL passes a context pointer through user_data; we cast it to UI* and
@@ -1023,7 +1055,6 @@ void UI::onPlusTouched(lv_event_t* e) {
     self->refreshEdit();
 }
 
-
 // ===================================================================
 // ICON PICKER SCREEN
 // ===================================================================
@@ -1072,161 +1103,226 @@ void UI::buildIconPick() {
 }
 
 // ===================================================================
-// FULLSCREEN CHART SCREEN
+// FULLSCREEN PRICE-TABLE SCREEN
 // ===================================================================
 //
-// A bigger version of the dashboard chart with axis labels, a dashed
-// average line, and a tap-to-inspect tooltip. Tapping inside the chart
-// area shows "HH:00 — N.NN c/kWh" for the closest hour.
+// Tapping the dashboard chart opens this screen which shows every
+// available future hour as a colored cell in a 4-column scrollable
+// grid. Each cell contains "HH:00\nN.N c/kWh"; the cell's background
+// color reflects the price tier (green/yellow/orange/red), same scale
+// as the dashboard chart. The cell representing the CURRENT hour is
+// outlined in light blue (COL_NOWBAR) so the user can tell at a glance
+// where they are in the timeline.
+//
+// Implementation notes:
+// * We use lv_table for free scrolling, fixed-pitch cells, and the
+//   built-in LV_EVENT_DRAW_PART_BEGIN hook for per-cell coloring.
+// * Cell value text is "HH:00\nN.N" — a two-line label fits comfortably
+//   in a 60-px-tall row at FONT_14.
+// * Coloring + outlining happen entirely in onFullTableDrawPart by
+//   modifying the rect_dsc / label_dsc fields LVGL passes us before it
+//   actually draws the cell.
 
-void UI::buildFullChart() {
+void UI::buildFullTable() {
     _scrFullChart = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(_scrFullChart, COL_BG, 0);
     lv_obj_set_style_bg_opa(_scrFullChart, LV_OPA_COVER, 0);
     lv_obj_clear_flag(_scrFullChart, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(_scrFullChart, 0, 0);
 
-    _fullChartTitle = makeLabel(_scrFullChart, "",
-                                COL_TEXT, FONT_16);
-    lv_obj_align(_fullChartTitle, LV_ALIGN_TOP_MID, 0, 6);
+    // Header bar: title on the left, "Back" button on the right.
+    _scrFullTitle = makeLabel(_scrFullChart, T(S_PRICES_TODAY),
+                              COL_TEXT, FONT_16);
+    lv_obj_align(_scrFullTitle, LV_ALIGN_TOP_LEFT, 8, 6);
 
-    lv_obj_t* back = makeCard(_scrFullChart, 6, 4, 72, 24);
+    lv_obj_t* back = makeCard(_scrFullChart, DISP_W - 80, 4, 72, 24);
     lv_obj_set_style_radius(back, 12, 0);
     lv_obj_t* bl = makeLabel(back, T(S_BACK), COL_TEXT, FONT_12);
     lv_obj_center(bl);
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, onFullChartBack, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(back, onFullTableBack, LV_EVENT_CLICKED, this);
 
-    // Y-axis label gutter on the left
-    _fullYAxis = makeLabel(_scrFullChart, "",
-                           COL_DIM, FONT_12);
-    lv_obj_align(_fullYAxis, LV_ALIGN_LEFT_MID, 4, 0);
+    // The table itself fills the rest of the screen.
+    int tableY = 32;
+    int tableH = DISP_H - tableY;
+    _fullTable = lv_table_create(_scrFullChart);
+    lv_obj_set_pos(_fullTable, 0, tableY);
+    lv_obj_set_size(_fullTable, DISP_W, tableH);
+    lv_obj_set_style_bg_color(_fullTable, COL_BG, 0);
+    lv_obj_set_style_bg_opa(_fullTable, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_fullTable, 0, 0);
+    lv_obj_set_style_pad_all(_fullTable, 0, 0);
 
-    // Chart itself — large area
-    int chX = 50, chY = 32, chW = DISP_W - 60, chH = DISP_H - 60;
-    _fullChart = lv_chart_create(_scrFullChart);
-    lv_obj_set_pos(_fullChart, chX, chY);
-    lv_obj_set_size(_fullChart, chW, chH);
-    lv_chart_set_type(_fullChart, LV_CHART_TYPE_LINE);
-    // No built-in division lines — we draw our own crisp 6-hour grid in
-    // onFullChartDrawGrid below.
-    lv_chart_set_div_line_count(_fullChart, 0, 0);
-    lv_obj_set_style_bg_opa(_fullChart, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(_fullChart, COL_CARD, 0);
-    lv_obj_set_style_border_width(_fullChart, 0, 0);
-    lv_obj_set_style_pad_all(_fullChart, 4, 0);
-    lv_obj_set_style_radius(_fullChart, 6, 0);
-    lv_obj_set_style_size(_fullChart, 0, LV_PART_INDICATOR);  // hide points
-    lv_obj_set_style_line_width(_fullChart, 3, LV_PART_ITEMS);
-    // Reserve room at the bottom of the chart for axis tick labels.
-    lv_obj_set_style_pad_bottom(_fullChart, 18, LV_PART_MAIN);
-    lv_chart_set_axis_tick(_fullChart, LV_CHART_AXIS_PRIMARY_X,
-                           5, 2, 9, 5, true, 24);
-    lv_obj_set_style_text_font(_fullChart, FONT_12, LV_PART_TICKS);
-    lv_obj_set_style_text_color(_fullChart, COL_DIM, LV_PART_TICKS);
-    _fullChartSeries = lv_chart_add_series(_fullChart, COL_GREEN,
-                                            LV_CHART_AXIS_PRIMARY_Y);
+    // Column count + per-column width. 4 columns x 120 px = 480 px exactly.
+    lv_table_set_col_cnt(_fullTable, _fullCols);
+    int colW = DISP_W / _fullCols;
+    for (int c = 0; c < _fullCols; ++c) {
+        lv_table_set_col_width(_fullTable, c, colW);
+    }
 
-    // Wire per-segment color callback and tap-to-inspect.
-    lv_obj_add_event_cb(_fullChart, onFullChartDrawPart,
+    // Cell appearance: small padding, dark separator between cells, white
+    // text by default (we override per-cell in the draw callback).
+    lv_obj_set_style_pad_all   (_fullTable, 6, LV_PART_ITEMS);
+    lv_obj_set_style_text_align(_fullTable, LV_TEXT_ALIGN_CENTER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(_fullTable, COL_TEXT, LV_PART_ITEMS);
+    lv_obj_set_style_text_font (_fullTable, FONT_14, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(_fullTable, COL_BG, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(_fullTable, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_side (_fullTable, LV_BORDER_SIDE_FULL, LV_PART_ITEMS);
+
+    // Per-cell color + "now" outline are applied here.
+    lv_obj_add_event_cb(_fullTable, onFullTableDrawPart,
                         LV_EVENT_DRAW_PART_BEGIN, this);
-    // 6-hour vertical grid lines on top of the plot area.
-    lv_obj_add_event_cb(_fullChart, onFullChartDrawGrid,
-                        LV_EVENT_DRAW_POST_END, this);
-    lv_obj_add_flag(_fullChart, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_fullChart, onFullChartTouched,
-                        LV_EVENT_PRESSED, this);
-    lv_obj_add_event_cb(_fullChart, onFullChartTouched,
-                        LV_EVENT_PRESSING, this);
-
-    // Tooltip — invisible until tapped
-    _fullChartTip = lv_obj_create(_scrFullChart);
-    lv_obj_set_size(_fullChartTip, 140, 28);
-    lv_obj_set_style_bg_color(_fullChartTip, COL_NOWBAR, 0);
-    lv_obj_set_style_bg_opa(_fullChartTip, LV_OPA_90, 0);
-    lv_obj_set_style_radius(_fullChartTip, 4, 0);
-    lv_obj_set_style_border_width(_fullChartTip, 0, 0);
-    lv_obj_set_style_pad_all(_fullChartTip, 4, 0);
-    lv_obj_clear_flag(_fullChartTip, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(_fullChartTip, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t* tipLbl = lv_label_create(_fullChartTip);
-    lv_label_set_text(tipLbl, "");
-    lv_obj_set_style_text_color(tipLbl, COL_BG, 0);
-    lv_obj_set_style_text_font(tipLbl, FONT_14, 0);
-    lv_obj_center(tipLbl);
-    lv_obj_set_user_data(_fullChartTip, tipLbl);
 }
 
-void UI::refreshFullChart() {
+// Populate the table from the price feed: every available hour from the
+// CURRENT one onward gets a cell, in chronological order, left-to-right
+// then top-to-bottom (so reading order matches time order).
+void UI::refreshFullTable() {
+    if (!_fullTable) return;
     int n = _prices.count();
-    if (n == 0 || !_fullChart) return;
+    if (n == 0) {
+        lv_table_set_row_cnt(_fullTable, 1);
+        lv_table_set_cell_value(_fullTable, 0, 0, T(S_NO_DATA));
+        _fullFirstIdx = _fullLastIdx = _fullNowIdx = -1;
+        return;
+    }
 
     time_t now = time(nullptr);
-    struct tm tnow; localtime_r(&now, &tnow);
-    tnow.tm_hour = 0; tnow.tm_min = 0; tnow.tm_sec = 0;
-    time_t todayStart = mktime(&tnow);
 
-    int first = -1, last = -1;
+    // Find the first entry whose hour CONTAINS "now" (or is in the
+    // future). Everything from that index onward gets shown. If "now"
+    // hasn't started yet (e.g. clock not synced), start at 0.
+    int first = 0;
+    bool found = false;
     for (int i = 0; i < n; ++i) {
         time_t ts = _prices.at(i).ts_start;
-        if (ts >= todayStart && ts < todayStart + 48 * 3600) {
-            if (first < 0) first = i;
-            last = i;
-        }
+        if (now < ts + 3600) { first = i; found = true; break; }
     }
-    if (first < 0) return;
+    if (!found) first = n - 1;
+    int last = n - 1;
+    int count = last - first + 1;
+    if (count < 1) count = 1;
 
-    float mn = _prices.at(first).price_raw, mx = mn, sum = 0;
-    int cnt = 0;
+    _fullFirstIdx = first;
+    _fullLastIdx  = last;
+
+    // Min/max for the cell-color scale (use the WHOLE displayed range so
+    // coloring stays consistent as the table scrolls).
+    float mn = _prices.at(first).price_raw;
+    float mx = mn;
     for (int i = first; i <= last; ++i) {
         float p = _prices.at(i).price_raw;
         if (p < mn) mn = p;
         if (p > mx) mx = p;
-        sum += p; cnt++;
     }
-    float avg = cnt > 0 ? sum / cnt : 0;
-    _fullMin = mn; _fullMax = mx; _fullAvg = avg;
-    _fullFirstIdx = first; _fullLastIdx = last;
+    _fullMin = mn;
+    _fullMax = mx;
+    _fullAvg = 0;     // unused
 
-    float lo = mn < 0 ? mn * 1.05f : 0;
-    float hi = mx * 1.05f;
-    if (hi - lo < 0.01f) hi = lo + 0.01f;
+    // Locate the "now" cell so the draw callback can outline it. The
+    // first cell IS "now" by construction (or the future) — but only
+    // outline if "now" is actually inside that hour, not before it.
+    int nowAbsIdx = -1;
+    for (int i = first; i <= last; ++i) {
+        time_t ts = _prices.at(i).ts_start;
+        if (now >= ts && now < ts + 3600) { nowAbsIdx = i; break; }
+    }
+    _fullNowIdx = (nowAbsIdx >= 0) ? (nowAbsIdx - first) : -1;
 
-    int yMin = (int)(lo * 100000.0f);   // EUR/kWh × 100000
-    int yMax = (int)(hi * 100000.0f);
-    if (yMax <= yMin) yMax = yMin + 100;
-    lv_chart_set_range(_fullChart, LV_CHART_AXIS_PRIMARY_Y, yMin, yMax);
-
-    int pts = last - first + 1;
-    lv_chart_set_point_count(_fullChart, pts);
-    lv_chart_set_all_value(_fullChart, _fullChartSeries, LV_CHART_POINT_NONE);
-    for (int i = 0; i < pts; ++i) {
-        float p = _prices.at(first + i).price_raw;
-        lv_chart_set_value_by_id(_fullChart, _fullChartSeries, i,
-                                 (int)(p * 100000.0f));
+    // Write cell values.
+    int rows = (count + _fullCols - 1) / _fullCols;
+    lv_table_set_row_cnt(_fullTable, rows);
+    for (int i = 0; i < count; ++i) {
+        int row = i / _fullCols;
+        int col = i % _fullCols;
+        const PriceEntry& e = _prices.at(first + i);
+        struct tm dt; localtime_r(&e.ts_start, &dt);
+        char b[32];
+        // Two-line cell: time on top, price below.
+        snprintf(b, sizeof(b), "%02d:00\n%s",
+                 dt.tm_hour, formatPrice(e.price_raw).c_str());
+        lv_table_set_cell_value(_fullTable, row, col, b);
+    }
+    // Clear unused trailing cells (if the previous refresh had more).
+    for (int i = count; i < rows * _fullCols; ++i) {
+        int row = i / _fullCols;
+        int col = i % _fullCols;
+        lv_table_set_cell_value(_fullTable, row, col, "");
     }
 
-    // Y-axis label: show min / avg / max stacked
-    char yb[64];
-    snprintf(yb, sizeof(yb), "%.1f\n\nAvg\n%.1f\n\n%.1f",
-             mx * 100, avg * 100, mn * 100);
-    lv_label_set_text(_fullYAxis, yb);
-
-    // X-axis hour labels are drawn by the chart itself via the axis-tick
-    // mechanism. See onFullChartDrawPart().
-
-    // Title with date
-    if (cnt > 0) {
-        time_t ts = _prices.at(first).ts_start;
-        struct tm dt; localtime_r(&ts, &dt);
+    // Title: "Today  DD.MM"
+    {
+        struct tm dt; localtime_r(&now, &dt);
         char tb[40];
-        snprintf(tb, sizeof(tb), "%s, %d.%02d",
+        snprintf(tb, sizeof(tb), "%s  %d.%02d",
                  T(S_PRICES_TODAY), dt.tm_mday, dt.tm_mon + 1);
-        lv_label_set_text(_fullChartTitle, tb);
+        lv_label_set_text(_scrFullTitle, tb);
     }
 
-    // Hide tooltip on refresh (re-tapping shows it again)
-    lv_obj_add_flag(_fullChartTip, LV_OBJ_FLAG_HIDDEN);
+    // Force redraw so the now-cell gets outlined / cells get recolored.
+    lv_obj_invalidate(_fullTable);
+}
+
+// LVGL fires LV_EVENT_DRAW_PART_BEGIN for each cell in an lv_table BEFORE
+// it actually paints the cell. dsc->id is row * col_count + col. We use
+// it to look up the price for that cell and override the rect_dsc /
+// label_dsc fields so the cell is drawn in the right tier color and
+// (for the "now" cell) with a light-blue outline.
+void UI::onFullTableDrawPart(lv_event_t* e) {
+    UI* self = (UI*)lv_event_get_user_data(e);
+    lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(e);
+    if (!dsc || dsc->part != LV_PART_ITEMS) return;
+
+    lv_obj_t* tbl = lv_event_get_target(e);
+    uint16_t cols = lv_table_get_col_cnt(tbl);
+    uint32_t row  = dsc->id / cols;
+    uint32_t col  = dsc->id - row * cols;
+    int rel       = (int)(row * cols + col);   // index within shown range
+    int abs       = self->_fullFirstIdx + rel;
+
+    if (abs < self->_fullFirstIdx || abs > self->_fullLastIdx) {
+        // Trailing empty cell. Make its background match the screen so
+        // it disappears visually.
+        if (dsc->rect_dsc) {
+            dsc->rect_dsc->bg_color = COL_BG;
+            dsc->rect_dsc->bg_opa   = LV_OPA_COVER;
+        }
+        return;
+    }
+
+    if (abs >= 0 && abs < self->_prices.count()) {
+        float p = self->_prices.at(abs).price_raw;
+        lv_color_t c = self->colorForPrice(p, self->_fullMin, self->_fullMax);
+        if (dsc->rect_dsc) {
+            dsc->rect_dsc->bg_color = c;
+            dsc->rect_dsc->bg_opa   = LV_OPA_COVER;
+            // Default cell border = thin dark separator.
+            dsc->rect_dsc->border_color = COL_BG;
+            dsc->rect_dsc->border_width = 1;
+            dsc->rect_dsc->radius       = 0;
+            // Highlight the "now" cell with a thick light-blue border.
+            if (rel == self->_fullNowIdx) {
+                dsc->rect_dsc->border_color = COL_NOWBAR;
+                dsc->rect_dsc->border_width = 3;
+            }
+        }
+        if (dsc->label_dsc) {
+            // Yellow is the only tier color light enough to need dark
+            // text for readability. Everything else stays white.
+            if (lv_color_to32(c) == lv_color_to32(COL_YELLOW)) {
+                dsc->label_dsc->color = COL_BG;
+            } else {
+                dsc->label_dsc->color = COL_TEXT;
+            }
+            dsc->label_dsc->align = LV_TEXT_ALIGN_CENTER;
+        }
+    }
+}
+
+void UI::onFullTableBack(lv_event_t* e) {
+    UI* self = (UI*)lv_event_get_user_data(e);
+    self->openMain();
 }
 
 // ===================================================================
@@ -1267,29 +1363,6 @@ void UI::onChartDrawPart(lv_event_t* e) {
     if (absIdx < 0 || absIdx >= self->_prices.count()) return;
     float p = self->_prices.at(absIdx).price_raw;
     lv_color_t c = self->colorForPrice(p, self->_chartMin, self->_chartMax);
-    if (dsc->line_dsc) dsc->line_dsc->color = c;
-}
-
-void UI::onFullChartDrawPart(lv_event_t* e) {
-    UI* self = (UI*)lv_event_get_user_data(e);
-    lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(e);
-    if (!dsc) return;
-
-    // X-axis tick labels for fullscreen chart.
-    if (dsc->part == LV_PART_TICKS &&
-        dsc->id == LV_CHART_AXIS_PRIMARY_X &&
-        dsc->text != NULL) {
-        int hour = (dsc->value >= 0 && dsc->value < 48) ? dsc->value : 0;
-        lv_snprintf(dsc->text, dsc->text_length, "%02d", hour);
-        return;
-    }
-
-    if (dsc->part != LV_PART_ITEMS) return;
-    int idx = dsc->id;
-    int absIdx = self->_fullFirstIdx + idx;
-    if (absIdx < 0 || absIdx >= self->_prices.count()) return;
-    float p = self->_prices.at(absIdx).price_raw;
-    lv_color_t c = self->colorForPrice(p, self->_fullMin, self->_fullMax);
     if (dsc->line_dsc) dsc->line_dsc->color = c;
 }
 
@@ -1356,68 +1429,12 @@ void UI::onChartDrawGrid(lv_event_t* e) {
     drawSixHourGrid(e, 48);
 }
 
-void UI::onFullChartDrawGrid(lv_event_t* e) {
-    drawSixHourGrid(e, 48);
-}
-
-// ===================================================================
-// TAP-TO-INSPECT on fullscreen chart
-// ===================================================================
-
-void UI::onFullChartTouched(lv_event_t* e) {
-    UI* self = (UI*)lv_event_get_user_data(e);
-    if (self->_fullFirstIdx < 0) return;
-
-    lv_indev_t* indev = lv_indev_get_act();
-    if (!indev) return;
-    lv_point_t pt;
-    lv_indev_get_point(indev, &pt);
-
-    lv_area_t a;
-    lv_obj_get_coords(self->_fullChart, &a);
-    int chartW = a.x2 - a.x1;
-    int relX = pt.x - a.x1;
-    if (chartW <= 0 || relX < 0 || relX > chartW) return;
-
-    int pts = self->_fullLastIdx - self->_fullFirstIdx + 1;
-    if (pts <= 0) return;
-    int hourIdx = (relX * (pts - 1) + chartW / 2) / chartW;
-    if (hourIdx < 0) hourIdx = 0;
-    if (hourIdx >= pts) hourIdx = pts - 1;
-
-    int absIdx = self->_fullFirstIdx + hourIdx;
-    const PriceEntry& pe = self->_prices.at(absIdx);
-    struct tm dt; localtime_r(&pe.ts_start, &dt);
-
-    char tb[64];
-    snprintf(tb, sizeof(tb), "%02d:00  %s",
-             dt.tm_hour, self->formatPrice(pe.price_raw).c_str());
-
-    lv_obj_t* tip = self->_fullChartTip;
-    lv_obj_t* tipLbl = (lv_obj_t*)lv_obj_get_user_data(tip);
-    if (tipLbl) lv_label_set_text(tipLbl, tb);
-
-    // Position the tip just above the touch point, but keep on screen.
-    int tipX = pt.x - 70;
-    int tipY = a.y1 - 36;
-    if (tipX < 4) tipX = 4;
-    if (tipX > DISP_W - 144) tipX = DISP_W - 144;
-    if (tipY < 32) tipY = a.y2 + 4;  // flip below if no room above
-    lv_obj_set_pos(tip, tipX, tipY);
-    lv_obj_clear_flag(tip, LV_OBJ_FLAG_HIDDEN);
-}
-
-void UI::onFullChartBack(lv_event_t* e) {
-    UI* self = (UI*)lv_event_get_user_data(e);
-    self->openMain();
-}
-
 void UI::onChartTouched(lv_event_t* e) {
     UI* self = (UI*)lv_event_get_user_data(e);
     // Stop the event from bubbling up to the main-screen click handler,
     // which would otherwise also fire and try to open the relay screen.
     lv_event_stop_bubbling(e);
-    self->openFullChart();
+    self->openFullTable();
 }
 
 // ===================================================================

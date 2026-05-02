@@ -100,6 +100,8 @@ private:
     lv_obj_t* _editOffAboveVal = nullptr;          // value label for the OFF_ABOVE spinner
     lv_obj_t* _editOnBelowRow  = nullptr;          // container for ON_BELOW spinner — hidden in non-AUTO/non-PRICE modes
     lv_obj_t* _editOffAboveRow = nullptr;          // container for OFF_ABOVE spinner — visible only in AUTO mode
+    lv_obj_t* _editOnBelowCaption  = nullptr;      // caption above ON_BELOW row
+    lv_obj_t* _editOffAboveCaption = nullptr;      // caption above OFF_ABOVE row
     lv_obj_t* _editHysteresisLbl = nullptr;        // small caption that explains the gap (or shows "no hysteresis")
     lv_obj_t* _editIconBtn    = nullptr;     // tap to open icon picker
     lv_obj_t* _editIconLabel  = nullptr;     // shows the chosen icon glyph
@@ -107,24 +109,26 @@ private:
     // ---- Icon picker screen widgets ----
     lv_obj_t* _iconGrid       = nullptr;
 
-    // ---- Fullscreen chart screen widgets ----
-    lv_obj_t* _fullChart       = nullptr;
-    lv_chart_series_t* _fullChartSeries = nullptr;
-    lv_obj_t* _fullAvgLine     = nullptr;
-    lv_obj_t* _fullChartTitle  = nullptr;
-    lv_obj_t* _fullChartTip    = nullptr;    // floating "HH:00 — N.NN c/kWh"
-    lv_obj_t* _fullYAxis       = nullptr;
-    lv_obj_t* _fullXAxis       = nullptr;
-    int       _fullFirstIdx    = -1;
-    int       _fullLastIdx     = -1;
-    float     _fullMin = 0, _fullMax = 0, _fullAvg = 0;
+    // ---- Fullscreen price-table screen widgets ----
+    // Tapping the dashboard chart opens a screen showing every available
+    // future price as a colored grid (4 columns × N rows, scrollable).
+    // The "current" hour cell is outlined in light blue.
+    lv_obj_t* _scrFullTitle = nullptr;       // "Prices — DD.MM" header label
+    lv_obj_t* _fullTable    = nullptr;       // lv_table widget
+    int       _fullFirstIdx = -1;            // first price entry shown in the table
+    int       _fullLastIdx  = -1;            // last price entry shown in the table
+    int       _fullNowIdx   = -1;            // index of the "now" cell (relative to table rows*cols)
+    int       _fullCols     = 4;             // table column count
+    float     _fullMin = 0, _fullMax = 0;    // for cell coloring
+    // (kept for compatibility; not currently used by the table view)
+    float     _fullAvg = 0;
 
     // ---- Construction helpers ----
     void buildMain();
     void buildRelays();
     void buildEdit();
     void buildIconPick();
-    void buildFullChart();
+    void buildFullTable();
 
     void refreshHeader();
     void refreshPriceCards();
@@ -133,7 +137,7 @@ private:
     void refreshStats();
     void refreshRelayTiles();
     void refreshEdit();
-    void refreshFullChart();
+    void refreshFullTable();
 
     String currentTimeString() const;
     String dateString() const;
@@ -143,13 +147,11 @@ private:
 
     // ---- Event handlers (static thunks) ----
     static void onMainTouched(lv_event_t* e);
-    static void onChartTouched(lv_event_t* e);          // open fullscreen
+    static void onChartTouched(lv_event_t* e);          // open fullscreen table
     static void onChartDrawPart(lv_event_t* e);         // per-segment color
     static void onChartDrawGrid(lv_event_t* e);         // 6h vertical grid lines
-    static void onFullChartDrawPart(lv_event_t* e);
-    static void onFullChartDrawGrid(lv_event_t* e);     // 6h vertical grid lines (full)
-    static void onFullChartTouched(lv_event_t* e);      // tap-to-inspect
-    static void onFullChartBack(lv_event_t* e);
+    static void onFullTableDrawPart(lv_event_t* e);     // per-cell color + "now" outline
+    static void onFullTableBack(lv_event_t* e);
     static void onRelayTileTouched(lv_event_t* e);
     static void onBackToMainTouched(lv_event_t* e);
     static void onBackToRelaysTouched(lv_event_t* e);
@@ -164,5 +166,5 @@ private:
     void openEdit(int idx);
     void openMain();
     void openIconPick();
-    void openFullChart();
+    void openFullTable();
 };
