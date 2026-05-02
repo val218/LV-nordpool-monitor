@@ -1,0 +1,123 @@
+name: Build LV-nordpool-monitor
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Set up Node.js (for font generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate fonts (text + icons)
+        run: |
+          chmod +x tools/build_fonts.sh
+          bash tools/build_fonts.sh
+
+      - name: Verify generated font files
+        run: |
+          set -e
+          echo "==== Generated font files in lib/np_fonts/src/ ===="
+          ls -la lib/np_fonts/src/np_font_*.c lib/np_fonts/src/np_icons_*.c
+          echo ""
+          echo "==== Symbol exports check ===="
+          for f in lib/np_fonts/src/np_font_*.c lib/np_fonts/src/np_icons_*.c; do
+              [ -f "$f" ] || continue
+              sym=$(basename "$f" .c)
+              if grep -qE "lv_font_t[[:space:]]+${sym}[[:space:]]*=" "$f"; then
+                  echo "  OK: $f exports '${sym}'"
+              else
+                  echo "  ERR: $f does NOT export '${sym}'"
+                  exit 1
+              fi
+          done
+
+      - name: Sanity-check project files
+        run: |
+          set -e
+          echo "---- platformio.ini head ----"
+          head -3 platformio.ini
+          first=$(head -1 platformio.ini)
+          case "$first" in
+            \;*|\[*) echo "OK: platformio.ini looks like an INI file" ;;
+            *) echo "ERROR: platformio.ini does not start with ';' or '[' — file may be corrupted"; exit 1 ;;
+          esac
+          test -s src/main.cpp || (echo "ERROR: src/main.cpp is empty or missing"; exit 1)
+          test -s src/ui.cpp   || (echo "ERROR: src/ui.cpp is empty or missing"; exit 1)
+          test -s lib/np_fonts/src/np_font_16.c  || (echo "ERROR: text fonts not generated"; exit 1)
+          test -s lib/np_fonts/src/np_icons_24.c || (echo "ERROR: icon font not generated"; exit 1)
+          test -s lib/np_fonts/library.json      || (echo "ERROR: lib/np_fonts/library.json missing"; exit 1)
+          test -s lib/np_fonts/include/np_fonts_lib.h || (echo "ERROR: lib/np_fonts/include/np_fonts_lib.h missing"; exit 1)
+          test -s lib/np_fonts/src/np_fonts_lib.c     || (echo "ERROR: lib/np_fonts/src/np_fonts_lib.c missing"; exit 1)
+          echo "Project files look sane."
+
+      - name: Show PlatformIO version
+        run: pio --version
+
+      - name: Clean build directory
+        run: rm -rf .pio/build
+
+      - name: Show project config and source files
+        run: |
+          echo "==== platformio.ini env config ===="
+          pio project config -e LV-nordpool-monitor || true
+          echo ""
+          echo "==== src/ tree ===="
+          find src -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' \) | sort
+          echo ""
+          echo "==== lib/ tree ===="
+          find lib -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.json' \) | sort
+          echo ""
+          echo "==== lib/np_fonts/ contents ===="
+          ls -la lib/np_fonts/
+
+      - name: Build firmware
+        run: pio run -e LV-nordpool-monitor
+
+      - name: Build merged flash image
+        run: pio run -e LV-nordpool-monitor -t build_merged
+
+      - name: Show build artifacts
+        run: ls -la .pio/build/LV-nordpool-monitor/
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LV-nordpool-monitor
+          path: |
+            .pio/build/LV-nordpool-monitor/firmware.bin
+            .pio/build/LV-nordpool-monitor/merged-flash.bin
+            .pio/build/LV-nordpool-monitor/bootloader.bin
+            .pio/build/LV-nordpool-monitor/partitions.bin
+          if-no-files-found: warn
