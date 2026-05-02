@@ -1,0 +1,7 @@
+{
+    "name": "np_fonts",
+    "version": "1.0.0",
+    "description": "Generated LVGL fonts (text + icon) for Nordpool Monitor. The .c files in src/ are produced by tools/build_fonts.sh during CI and are gitignored.",
+    "frameworks": "*",
+    "platforms": "*"
+}
