@@ -117,9 +117,16 @@ void setup() {
     // I2C bus shared between GT911 touch and XL9535 relays.
     Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ_HZ);
 
-    // Backlight on
-    pinMode(LCD_PIN_BL, OUTPUT);
-    digitalWrite(LCD_PIN_BL, HIGH);
+    // Backlight: drive with LEDC PWM at full brightness. Several JC4827W543
+    // variants don't respond to plain digitalWrite() on the BL pin — the
+    // pin requires a real PWM signal to enable the backlight regulator.
+    // 5 kHz / 8-bit / channel 0 is what the community drivers use.
+    constexpr int BL_LEDC_CH    = 0;
+    constexpr int BL_LEDC_FREQ  = 5000;
+    constexpr int BL_LEDC_BITS  = 8;
+    ledcSetup(BL_LEDC_CH, BL_LEDC_FREQ, BL_LEDC_BITS);
+    ledcAttachPin(LCD_PIN_BL, BL_LEDC_CH);
+    ledcWrite(BL_LEDC_CH, 255);   // full brightness
 
     // Bring up the display
     if (!gfx->begin()) {
