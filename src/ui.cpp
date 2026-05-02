@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "i18n.h"
+#include "np_fonts.h"
 #include <time.h>
 
 // LVGL color helpers
@@ -132,7 +133,7 @@ void UI::buildMain() {
     lv_obj_add_event_cb(_scrMain, onMainTouched, LV_EVENT_CLICKED, this);
 
     // ---- Header ----
-    _hdrTitle  = makeLabel(_scrMain, T(S_TITLE), COL_TEXT, &lv_font_montserrat_14);
+    _hdrTitle  = makeLabel(_scrMain, T(S_TITLE), COL_TEXT, &np_font_14);
     lv_obj_align(_hdrTitle, LV_ALIGN_TOP_LEFT, 6, 6);
 
     _hdrStatus = lv_obj_create(_scrMain);
@@ -144,13 +145,13 @@ void UI::buildMain() {
     lv_obj_align(_hdrStatus, LV_ALIGN_TOP_LEFT, 130, 12);
     lv_obj_clear_flag(_hdrStatus, LV_OBJ_FLAG_SCROLLABLE);
 
-    _hdrIp = makeLabel(_scrMain, "", COL_DIM, &lv_font_montserrat_12);
+    _hdrIp = makeLabel(_scrMain, "", COL_DIM, &np_font_12);
     lv_obj_align(_hdrIp, LV_ALIGN_TOP_LEFT, 144, 9);
 
-    _hdrClock = makeLabel(_scrMain, "--:--", COL_TEXT, &lv_font_montserrat_14);
+    _hdrClock = makeLabel(_scrMain, "--:--", COL_TEXT, &np_font_14);
     lv_obj_align(_hdrClock, LV_ALIGN_TOP_RIGHT, -6, 6);
 
-    _hdrDate = makeLabel(_scrMain, "", COL_DIM, &lv_font_montserrat_12);
+    _hdrDate = makeLabel(_scrMain, "", COL_DIM, &np_font_12);
     lv_obj_align(_hdrDate, LV_ALIGN_TOP_RIGHT, -54, 9);
 
     // ---- Price cards row (1:2:1) ----
@@ -168,23 +169,23 @@ void UI::buildMain() {
                          int x, int y, int w, int h,
                          const char* title, const lv_font_t* valFont) {
         *card = makeCard(_scrMain, x, y, w, h);
-        lv_obj_t* t = makeLabel(*card, title, COL_DIM, &lv_font_montserrat_12);
+        lv_obj_t* t = makeLabel(*card, title, COL_DIM, &np_font_12);
         lv_obj_align(t, LV_ALIGN_TOP_LEFT, 4, 2);
 
         *valLbl = makeLabel(*card, "--", COL_TEXT, valFont);
         lv_obj_center(*valLbl);
 
         lv_obj_t* u = makeLabel(*card, unitsLabel().c_str(),
-                                COL_DIM, &lv_font_montserrat_12);
+                                COL_DIM, &np_font_12);
         lv_obj_align(u, LV_ALIGN_BOTTOM_MID, 0, -1);
     };
 
     buildCard(&_cardPrev, &_lblPrev, prevX, rowY, sideW, rowH,
-              T(S_PREV), &lv_font_montserrat_24);
+              T(S_PREV), &np_font_24);
     buildCard(&_cardCur,  &_lblCur,  curX,  rowY, curW,  rowH,
-              T(S_CURRENT), &lv_font_montserrat_40);
+              T(S_CURRENT), &np_font_40);
     buildCard(&_cardNext, &_lblNext, nextX, rowY, sideW, rowH,
-              T(S_NEXT), &lv_font_montserrat_24);
+              T(S_NEXT), &np_font_24);
 
     // ---- Chart ----
     int chY = 108, chH = 100;
@@ -204,7 +205,7 @@ void UI::buildMain() {
     _chartSeries = lv_chart_add_series(_chart, COL_GREEN, LV_CHART_AXIS_PRIMARY_Y);
 
     _chartUnits = makeLabel(chartCard, unitsLabel().c_str(),
-                            COL_DIM, &lv_font_montserrat_12);
+                            COL_DIM, &np_font_12);
     lv_obj_align(_chartUnits, LV_ALIGN_TOP_LEFT, 2, 0);
 
     // ---- Footer stats (4 mini cards) ----
@@ -214,9 +215,9 @@ void UI::buildMain() {
     auto buildStat = [&](lv_obj_t** lbl, int idx, const char* title) {
         int x = padX + idx * (fW + padX);
         lv_obj_t* c = makeCard(_scrMain, x, ftY, fW, ftH);
-        lv_obj_t* t = makeLabel(c, title, COL_DIM, &lv_font_montserrat_12);
+        lv_obj_t* t = makeLabel(c, title, COL_DIM, &np_font_12);
         lv_obj_align(t, LV_ALIGN_TOP_LEFT, 2, 1);
-        *lbl = makeLabel(c, "--", COL_TEXT, &lv_font_montserrat_20);
+        *lbl = makeLabel(c, "--", COL_TEXT, &np_font_20);
         lv_obj_align(*lbl, LV_ALIGN_BOTTOM_MID, 0, -2);
     };
     buildStat(&_statAvg, 0, T(S_PRICES_TODAY));
@@ -236,12 +237,12 @@ void UI::buildRelays() {
 
     // Header strip
     lv_obj_t* title = makeLabel(_scrRelays, T(S_RELAYS),
-                                COL_TEXT, &lv_font_montserrat_16);
+                                COL_TEXT, &np_font_16);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, 6);
 
     lv_obj_t* back = makeCard(_scrRelays, DISP_W - 80, 4, 72, 24);
     lv_obj_set_style_radius(back, 12, 0);
-    lv_obj_t* bl = makeLabel(back, T(S_BACK), COL_TEXT, &lv_font_montserrat_12);
+    lv_obj_t* bl = makeLabel(back, T(S_BACK), COL_TEXT, &np_font_12);
     lv_obj_center(bl);
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(back, onBackToMainTouched, LV_EVENT_CLICKED, this);
@@ -266,16 +267,16 @@ void UI::buildRelays() {
         lv_obj_set_user_data(tt.card, (void*)(intptr_t)i);
         lv_obj_add_event_cb(tt.card, onRelayTileTouched, LV_EVENT_CLICKED, this);
 
-        tt.name = makeLabel(tt.card, "Relay", COL_TEXT, &lv_font_montserrat_14);
+        tt.name = makeLabel(tt.card, "Relay", COL_TEXT, &np_font_14);
         lv_obj_align(tt.name, LV_ALIGN_TOP_LEFT, 2, 2);
 
-        tt.state = makeLabel(tt.card, "OFF", COL_DIM, &lv_font_montserrat_12);
+        tt.state = makeLabel(tt.card, "OFF", COL_DIM, &np_font_12);
         lv_obj_align(tt.state, LV_ALIGN_TOP_RIGHT, -2, 2);
 
-        tt.mode = makeLabel(tt.card, "Always OFF", COL_DIM, &lv_font_montserrat_12);
+        tt.mode = makeLabel(tt.card, "Always OFF", COL_DIM, &np_font_12);
         lv_obj_align(tt.mode, LV_ALIGN_TOP_LEFT, 2, 26);
 
-        tt.threshold = makeLabel(tt.card, "", COL_TEXT, &lv_font_montserrat_16);
+        tt.threshold = makeLabel(tt.card, "", COL_TEXT, &np_font_16);
         lv_obj_align(tt.threshold, LV_ALIGN_BOTTOM_LEFT, 2, -4);
     }
 }
@@ -289,12 +290,12 @@ void UI::buildEdit() {
     lv_obj_clear_flag(_scrEdit, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(_scrEdit, 0, 0);
 
-    _editTitle = makeLabel(_scrEdit, "Relay 1", COL_TEXT, &lv_font_montserrat_16);
+    _editTitle = makeLabel(_scrEdit, "Relay 1", COL_TEXT, &np_font_16);
     lv_obj_align(_editTitle, LV_ALIGN_TOP_LEFT, 8, 6);
 
     lv_obj_t* back = makeCard(_scrEdit, DISP_W - 80, 4, 72, 24);
     lv_obj_set_style_radius(back, 12, 0);
-    lv_obj_t* bl = makeLabel(back, T(S_BACK), COL_TEXT, &lv_font_montserrat_12);
+    lv_obj_t* bl = makeLabel(back, T(S_BACK), COL_TEXT, &np_font_12);
     lv_obj_center(bl);
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(back, onBackToRelaysTouched, LV_EVENT_CLICKED, this);
@@ -311,7 +312,7 @@ void UI::buildEdit() {
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_user_data(b, (void*)(intptr_t)m);
         lv_obj_add_event_cb(b, onModeBtnTouched, LV_EVENT_CLICKED, this);
-        lv_obj_t* l = makeLabel(b, labels[m], COL_TEXT, &lv_font_montserrat_12);
+        lv_obj_t* l = makeLabel(b, labels[m], COL_TEXT, &np_font_12);
         lv_obj_center(l);
         _modeBtns[m] = b;
     }
@@ -323,22 +324,22 @@ void UI::buildEdit() {
     lv_obj_t* minus = makeCard(_scrEdit, 6, valY, spinW, valH);
     lv_obj_add_flag(minus, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(minus, onMinusTouched, LV_EVENT_CLICKED, this);
-    lv_obj_t* mlbl = makeLabel(minus, "-", COL_TEXT, &lv_font_montserrat_48);
+    lv_obj_t* mlbl = makeLabel(minus, "-", COL_TEXT, &np_font_48);
     lv_obj_center(mlbl);
 
     lv_obj_t* plus = makeCard(_scrEdit, DISP_W - 6 - spinW, valY, spinW, valH);
     lv_obj_add_flag(plus, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(plus, onPlusTouched, LV_EVENT_CLICKED, this);
-    lv_obj_t* plbl = makeLabel(plus, "+", COL_TEXT, &lv_font_montserrat_48);
+    lv_obj_t* plbl = makeLabel(plus, "+", COL_TEXT, &np_font_48);
     lv_obj_center(plbl);
 
     lv_obj_t* valCard = makeCard(_scrEdit, 6 + spinW + 6, valY,
                                   DISP_W - 2 * (6 + spinW + 6), valH);
-    _editValueLabel = makeLabel(valCard, "--", COL_TEXT, &lv_font_montserrat_28);
+    _editValueLabel = makeLabel(valCard, "--", COL_TEXT, &np_font_28);
     lv_obj_center(_editValueLabel);
 
     lv_obj_t* tlbl = makeLabel(_scrEdit, T(S_THRESHOLD),
-                                COL_DIM, &lv_font_montserrat_12);
+                                COL_DIM, &np_font_12);
     lv_obj_align(tlbl, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 }
 

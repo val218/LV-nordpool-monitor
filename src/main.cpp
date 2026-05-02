@@ -97,12 +97,50 @@ static void loadSettings() {
 }
 
 static bool tryFetchPrices() {
-    if (!g_net.isConnected()) return false;
+    if (!g_net.isConnected()) {
+        Serial.println("[APP] tryFetchPrices: not connected, skipping");
+        return false;
+    }
+    Serial.println("[APP] Fetching prices...");
     String csv;
-    if (!g_net.fetchPricesCsv(csv)) return false;
+    unsigned long t0 = millis();
+    if (!g_net.fetchPricesCsv(csv)) {
+        Serial.printf("[APP] HTTPS fetch FAILED after %lums\n", millis() - t0);
+        return false;
+    }
+    Serial.printf("[APP] HTTPS fetch OK in %lums (%d bytes)\n",
+                  millis() - t0, (int)csv.length());
+    if (csv.length() > 0) {
+        Serial.printf("[APP] First 80 chars: %.80s\n", csv.c_str());
+    }
     int n = g_prices.parseCsv(csv);
     Serial.printf("[APP] parsed %d price entries\n", n);
     return n > 0;
+}
+
+// ---- Background task: price fetcher ---------------------------------
+// Runs on the OTHER core (not the one Arduino loop runs on) so it can do
+// blocking HTTPS calls without starving LVGL or the async web server.
+static volatile bool s_pricesUpdated = false;
+
+static void priceFetcherTask(void*) {
+    // Wait for WiFi to be up before the very first fetch
+    while (!g_net.isConnected()) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    // Wait an extra moment for NTP to sync — mktime() in parseCsv depends
+    // on the timezone being applied correctly.
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    for (;;) {
+        if (g_net.isConnected()) {
+            if (tryFetchPrices()) {
+                s_pricesUpdated = true;
+            }
+        }
+        // Sleep until the next refresh interval
+        vTaskDelay(pdMS_TO_TICKS(PRICE_REFRESH_MS));
+    }
 }
 
 void setup() {
@@ -189,14 +227,13 @@ void setup() {
     configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
     WiFi.scanNetworks(true);
 
-    if (g_net.isConnected()) {
-        delay(500);
-        tryFetchPrices();
-    }
+    // Start the price-fetcher on core 0 (Arduino loop runs on core 1).
+    // 8 KB stack is plenty for HTTPClient + WiFiClientSecure + parsing.
+    xTaskCreatePinnedToCore(priceFetcherTask, "prices",
+                             8192, nullptr, 1, nullptr, 0);
 }
 
 // ---- Loop timing ----
-static unsigned long s_lastPriceFetch = 0;
 static unsigned long s_lastRelayEval  = 0;
 static unsigned long s_lastUiRefresh  = 0;
 
@@ -214,20 +251,16 @@ void loop() {
         g_ui.setIpString(g_net.ipString());
     }
 
-    // Drive LVGL — must be called frequently. lv_timer_handler() returns the
-    // ms until the next required call; we don't bother sleeping that long
-    // because Wi-Fi & price fetching also need attention.
+    // Drive LVGL — must be called frequently for smooth UI.
     lv_timer_handler();
 
     unsigned long now = millis();
-    if (now - s_lastPriceFetch > PRICE_REFRESH_MS || s_lastPriceFetch == 0) {
-        if (g_net.isConnected()) {
-            if (tryFetchPrices()) {
-                // Trigger an immediate UI refresh once new data arrives.
-                s_lastUiRefresh = 0;
-            }
-            s_lastPriceFetch = now;
-        }
+
+    // Background task signals when fresh price data is available — refresh
+    // the UI immediately rather than waiting for the periodic refresh.
+    if (s_pricesUpdated) {
+        s_pricesUpdated = false;
+        s_lastUiRefresh = 0;
     }
 
     if (now - s_lastRelayEval > RELAY_EVAL_MS) {
@@ -242,5 +275,6 @@ void loop() {
         s_lastUiRefresh = now;
     }
 
-    delay(5);
+    // Tight loop — LVGL needs frequent ticks for smooth touch and animations.
+    delay(2);
 }

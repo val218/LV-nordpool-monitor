@@ -35,6 +35,31 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
+      - name: Set up Node.js (for font generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache generated fonts
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/fonts
+            tools/.cache
+          # Bust cache if either the font script changes
+          key: ${{ runner.os }}-fonts-${{ hashFiles('tools/build_fonts.sh') }}
+
+      - name: Generate fonts
+        run: |
+          set -e
+          if [ ! -f src/fonts/np_font_14.c ]; then
+            echo "Generating font C files..."
+            bash tools/build_fonts.sh
+          else
+            echo "Cached font files present, skipping regeneration."
+          fi
+          ls -la src/fonts/
+
       - name: Sanity-check project files
         run: |
           set -e
@@ -47,6 +72,7 @@ jobs:
           esac
           test -s src/main.cpp || (echo "ERROR: src/main.cpp is empty or missing"; exit 1)
           test -s src/ui.cpp   || (echo "ERROR: src/ui.cpp is empty or missing"; exit 1)
+          test -s src/fonts/np_font_14.c || (echo "ERROR: font files missing — did 'Generate fonts' step run?"; exit 1)
           echo "Project files look sane."
 
       - name: Show PlatformIO version
