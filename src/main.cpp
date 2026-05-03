@@ -17,6 +17,7 @@
 #include "net_manager.h"
 #include "web_server.h"
 #include "gt911.h"
+#include "backlight.h"
 
 // IMPORTANT: include the np_fonts library header so PlatformIO's Library
 // Dependency Finder discovers the lib/np_fonts/ project-local library and
@@ -55,6 +56,7 @@ NetManager       g_net;
 UI               g_ui(g_prices, g_relays);
 WebUI            g_web(g_net, g_relays, g_ui);
 GT911            g_touch(TOUCH_INT, TOUCH_RST, TOUCH_I2C_ADDR);
+BacklightManager g_backlight(0, LCD_PIN_BL);  // Use existing LEDC channel 0
 
 // ---- LVGL flush callback: hands a rectangle of pixels to Arduino_GFX.
 static void lv_flush_cb(lv_disp_drv_t* drv, const lv_area_t* area,
@@ -74,14 +76,14 @@ static bool    s_lastDown = false;
 static void lv_touch_read_cb(lv_indev_drv_t*, lv_indev_data_t* data) {
     int16_t x, y;
     if (g_touch.read(x, y)) {
-        // Clamp to display bounds — GT911 occasionally returns coords slightly
-        // outside the active area near the bezel.
+        // Clamp to display bounds
         if (x < 0) x = 0; if (x >= DISP_W) x = DISP_W - 1;
         if (y < 0) y = 0; if (y >= DISP_H) y = DISP_H - 1;
         s_lastX = x; s_lastY = y; s_lastDown = true;
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PR;
+        g_backlight.touchDetected();  // ADD THIS LINE
     } else {
         data->point.x = s_lastX;
         data->point.y = s_lastY;
@@ -314,11 +316,14 @@ void loop() {
     // across the chart and the clock/status indicators promptly accurate
     // without hammering the CPU. Each refresh call is cheap — most widgets
     // only re-render when their content actually changes.
-    if (now - s_lastUiRefresh > 250) {
+   if (now - s_lastUiRefresh > 250) {
         g_ui.refresh();
         s_lastUiRefresh = now;
     }
 
-    // Tight loop — LVGL needs frequent ticks for smooth touch and animations.
+    // Update backlight dimming logic
+    g_backlight.update();
+
+    // Tight loop
     delay(2);
 }
