@@ -30,7 +30,7 @@ void RelayController::setOutput(int ch, bool on) {
 void RelayController::writeAll() {
     // Build a 16-bit value for the expander in a single I2C transaction —
     // cheaper than 8 individual writePin() calls during bulk updates.
-    uint16_t v = 0xFFFF;
+    uint16_t v = 0;
     for (int i = 0; i < NUM_RELAYS; ++i) {
         bool pinHigh = RELAY_ACTIVE_LOW ? !_rules[i].state : _rules[i].state;
         if (pinHigh) v |=  (1u << i);
