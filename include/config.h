@@ -66,7 +66,7 @@
 // On the XL9535-K8V5, an output of LOW activates the optocoupler which energises
 // the relay coil. This is the same convention as classic active-low relay
 // modules. Set true so a "relay ON" state gets driven LOW on the expander pin.
-#define RELAY_ACTIVE_LOW  true
+#define RELAY_ACTIVE_LOW  false
 
 // ---- Data source ----
 // e-cena.lv serves a small (~7 KB) HTML page with today's and tomorrow's
