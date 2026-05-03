@@ -130,7 +130,7 @@
 #define LV_USE_SLIDER               1
 #define LV_USE_SWITCH               1
 #define LV_USE_TEXTAREA             0
-#define LV_USE_TABLE                0
+#define LV_USE_TABLE                1
 
 // Extra widgets — these are needed for the chart
 #define LV_USE_ANIMIMG              0

@@ -52,7 +52,7 @@ class RelayController {
 public:
     RelayController();
 
-    bool begin(uint8_t addr = XL9535_I2C_ADDR);
+    bool begin(uint8_t addr = XL9535_I2C_ADDR, TwoWire& bus = Wire);
 
     // Re-evaluate every rule against the current price. This DOES NOT
     // immediately apply turn-ON requests — it queues them and tick()

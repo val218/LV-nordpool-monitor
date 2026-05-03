@@ -13,9 +13,9 @@ RelayController::RelayController() : _xl(XL9535_I2C_ADDR) {
     }
 }
 
-bool RelayController::begin(uint8_t addr) {
+bool RelayController::begin(uint8_t addr, TwoWire& bus) {
     _xl = XL9535(addr);
-    if (!_xl.begin()) return false;
+    if (!_xl.begin(bus)) return false;
     // Initial state: write all rule states to expander now that hardware exists.
     writeAll();
     return true;

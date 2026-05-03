@@ -177,8 +177,15 @@ void setup() {
     setenv("TZ", TZ_INFO, 1);
     tzset();
 
-    // I2C bus shared between GT911 touch and XL9535 relays.
-    Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ_HZ);
+    // Two separate I2C buses on this board:
+    //   Wire  (I2C0): GT911 touch on internal traces (GPIO4/8) — not wired
+    //                 to any external connector, used only by the touchscreen.
+    //   Wire1 (I2C1): XL9535 relay board on the external header (GPIO17/18).
+    //                 Keeping the relay traffic off the touch bus avoids any
+    //                 risk of the relay coil noise glitching touch reads, and
+    //                 lets us run both at full 400 kHz independently.
+    Wire.begin (I2C_TOUCH_SDA, I2C_TOUCH_SCL, I2C_FREQ_HZ);
+    Wire1.begin(I2C_RELAY_SDA, I2C_RELAY_SCL, I2C_RELAY_FREQ_HZ);
 
     // Backlight: drive with LEDC PWM at full brightness. Several JC4827W543
     // variants don't respond to plain digitalWrite() on the BL pin — the
@@ -236,9 +243,11 @@ void setup() {
     g_ui.begin();
     loadSettings();
 
-    // Relay board
-    if (!g_relays.begin(XL9535_I2C_ADDR)) {
-        Serial.printf("[APP] XL9535 not found at 0x%02X\n", XL9535_I2C_ADDR);
+    // Relay board on the SECONDARY I2C bus (Wire1, GPIO17/18).
+    if (!g_relays.begin(XL9535_I2C_ADDR, Wire1)) {
+        Serial.printf("[APP] XL9535 not found at 0x%02X on Wire1 "
+                      "(SDA=GPIO%d, SCL=GPIO%d)\n",
+                      XL9535_I2C_ADDR, I2C_RELAY_SDA, I2C_RELAY_SCL);
     }
     g_relays.load();
 

@@ -21,20 +21,44 @@
 #define LCD_PIN_RST       -1   // tied to chip enable on this board, no GPIO needed
 #define LCD_PIN_BL         1   // backlight enable + PWM
 
-// ---- Touch (GT911 over I2C, shared with the XL9535 bus) ----
-// The GT911 lives on the same I2C bus as user-side I2C peripherals on this board.
-// Pins are wired to the QWIIC connector on the back; we reuse those for the
-// XL9535 relay board too.
-#define I2C_SDA            8
-#define I2C_SCL            4
+// ---- Touch (GT911 over INTERNAL I2C — Wire / I2C0) ----
+// The GT911 capacitive touch controller is wired to internal traces on
+// the JC4827W543 board. These pins are NOT exposed on the external
+// QWIIC / extension header — they exist only on the PCB to talk to the
+// touch chip. Don't try to use them for anything else.
+#define I2C_TOUCH_SDA      8
+#define I2C_TOUCH_SCL      4
 #define I2C_FREQ_HZ        400000
+
+// Backwards-compatibility aliases (older code referenced I2C_SDA / I2C_SCL
+// when the touch and relay buses were shared).
+#define I2C_SDA            I2C_TOUCH_SDA
+#define I2C_SCL            I2C_TOUCH_SCL
 
 #define TOUCH_INT          3
 #define TOUCH_RST         38
 #define TOUCH_I2C_ADDR    0x5D    // GT911 default; sometimes 0x14 on rev. boards
 
+// ---- Relay bus (XL9535 over EXTERNAL I2C — Wire1 / I2C1) ----
+// The external header on the JC4827W543 brings GPIO17 / GPIO18 to the
+// outside world. We use them as a SECOND I2C bus so the relay board
+// doesn't share wiring with the touch controller. Standard QWIIC pinout:
+//   pin 1 = GND       → board GND
+//   pin 2 = 3V3       → board 3V3 (signal-side power, VIN on the relay)
+//   pin 3 = SDA = 17  → board SDA
+//   pin 4 = SCL = 18  → board SCL
+// Relay coils need their own 5V supply (not from the QWIIC connector).
+#define I2C_RELAY_SDA     17
+#define I2C_RELAY_SCL     18
+#define I2C_RELAY_FREQ_HZ 400000
+
 // ---- XL9535 8-channel relay board ----
-// Address pins A0/A1/A2 → all GND ⇒ 0x20.
+// Address pins A0/A1/A2 are solder pads on the relay board. All three
+// LEFT OPEN (factory default) ⇒ address 0x20. Closing pads adds 1 to the
+// corresponding bit (A0=1, A1=2, A2=4), so the addresses go 0x20..0x27.
+// You only need to change this if you stack multiple relay boards on the
+// same bus. The board has built-in I2C pull-ups, so no external resistors
+// are needed.
 // All 8 outputs are mapped to relays in pin order P0..P7.
 #define XL9535_I2C_ADDR   0x20
 #define NUM_RELAYS         8
